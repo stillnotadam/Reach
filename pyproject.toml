@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reach-security"
+version = "0.0.1"
+description = "Prove what cloud credentials, and the AI agents holding them, can actually reach - SMT-based AWS IAM reasoning with proofs and witnesses."
+readme = "README.md"
+license = "AGPL-3.0-or-later"
+requires-python = ">=3.9"
+authors = [
+    {name = "Adam"},
+]
+keywords = [
+    "security", "aws", "iam", "cloud-security", "smt", "z3",
+    "formal-verification", "ai-agents", "privilege-escalation",
+]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Information Technology",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Operating System :: OS Independent",
+    "Topic :: Security",
+    "Environment :: Console",
+]
+dependencies = ["z3-solver>=4.12"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "pytest-cov>=4.0", "ruff>=0.6.0", "mypy>=1.10"]
+aws = ["boto3>=1.34"]  # validation/aws_simulator.py only
+
+[project.urls]
+Homepage = "https://github.com/ctrl-adam/Reach"
+Repository = "https://github.com/ctrl-adam/Reach"
+
+[project.scripts]
+reach = "reach.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+reach = ["data/*.json.gz"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "SIM", "S", "BLE", "PL"]
+# Condition encoding is a flat dispatch over operators; early returns read better than nesting.
+ignore = ["PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR0917", "PLR2004"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+"src/reach/engine.py" = ["S101"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.DS_Store
+*.egg-info/
+.pytest_cache/
+dist/
+build/
+.coverage
+htmlcov/
+.venv/
+venv/
+.env
+
+# AWS simulator harness output
+sim-report*.jsonl
+sim-smoke.jsonl

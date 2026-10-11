@@ -1,0 +1,155 @@
+{
+  "UserDetailList": [
+    {
+      "UserName": "alice",
+      "Arn": "arn:aws:iam::123456789012:user/alice",
+      "GroupList": [
+        "developers"
+      ],
+      "AttachedManagedPolicies": [],
+      "UserPolicyList": [
+        {
+          "PolicyName": "deny-iam",
+          "PolicyDocument": {
+            "Statement": [
+              {
+                "Effect": "Deny",
+                "Action": "iam:*",
+                "Resource": "*"
+              }
+            ]
+          }
+        }
+      ],
+      "PermissionsBoundary": {
+        "PermissionsBoundaryType": "Policy",
+        "PermissionsBoundaryArn": "arn:aws:iam::123456789012:policy/dev-boundary"
+      },
+      "Tags": [
+        {
+          "Key": "team",
+          "Value": "data"
+        }
+      ]
+    },
+    {
+      "UserName": "ghost",
+      "Arn": "arn:aws:iam::123456789012:user/ghost",
+      "GroupList": [],
+      "AttachedManagedPolicies": [
+        {
+          "PolicyName": "Gone",
+          "PolicyArn": "arn:aws:iam::123456789012:policy/gone"
+        }
+      ],
+      "UserPolicyList": []
+    }
+  ],
+  "GroupDetailList": [
+    {
+      "GroupName": "developers",
+      "Arn": "arn:aws:iam::123456789012:group/developers",
+      "GroupPolicyList": [],
+      "AttachedManagedPolicies": [
+        {
+          "PolicyName": "PowerUser",
+          "PolicyArn": "arn:aws:iam::aws:policy/PowerUserAccess"
+        }
+      ]
+    }
+  ],
+  "RoleDetailList": [
+    {
+      "RoleName": "data-pipeline",
+      "Arn": "arn:aws:iam::123456789012:role/data-pipeline",
+      "RolePolicyList": [
+        {
+          "PolicyName": "read-pii",
+          "PolicyDocument": "%7B%22Statement%22%3A%5B%7B%22Effect%22%3A%22Allow%22%2C%22Action%22%3A%22s3%3AGetObject%22%2C%22Resource%22%3A%22arn%3Aaws%3As3%3A%3A%3Acustomer-pii%2F%2A%22%2C%22Condition%22%3A%7B%22StringEquals%22%3A%7B%22aws%3APrincipalTag%2Fteam%22%3A%22data%22%7D%7D%7D%5D%7D"
+        }
+      ],
+      "AttachedManagedPolicies": [],
+      "Tags": [
+        {
+          "Key": "team",
+          "Value": "data"
+        }
+      ],
+      "AssumeRolePolicyDocument": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "AWS": "arn:aws:iam::123456789012:user/alice"
+            },
+            "Action": "sts:AssumeRole"
+          }
+        ]
+      }
+    }
+  ],
+  "Policies": [
+    {
+      "PolicyName": "PowerUserAccess",
+      "Arn": "arn:aws:iam::aws:policy/PowerUserAccess",
+      "DefaultVersionId": "v5",
+      "PolicyVersionList": [
+        {
+          "VersionId": "v5",
+          "IsDefaultVersion": true,
+          "Document": {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "NotAction": [
+                  "iam:*",
+                  "organizations:*",
+                  "account:*"
+                ],
+                "Resource": "*"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "PolicyName": "dev-boundary",
+      "Arn": "arn:aws:iam::123456789012:policy/dev-boundary",
+      "DefaultVersionId": "v2",
+      "PolicyVersionList": [
+        {
+          "VersionId": "v1",
+          "IsDefaultVersion": false,
+          "Document": {
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": "*",
+                "Resource": "*"
+              }
+            ]
+          }
+        },
+        {
+          "VersionId": "v2",
+          "IsDefaultVersion": true,
+          "Document": {
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "s3:*",
+                  "ec2:Describe*"
+                ],
+                "Resource": "*"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
