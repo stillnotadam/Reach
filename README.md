@@ -35,7 +35,7 @@ Every verdict is checked three ways. A second, solver-free implementation replay
 implementations against each other. And AWS's own policy simulator plus a live S3 test check both against AWS: see
 [validation/FINDINGS.md](validation/FINDINGS.md), which includes an error in AWS's simulator that Reach found.
 
-> Status: alpha (0.1.0). See the [roadmap](ROADMAP.md).
+> Status: alpha (0.2.0). See the [roadmap](ROADMAP.md).
 
 ## Example
 
