@@ -56,6 +56,7 @@ ignore = ["PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR0917", "PLR2004"]
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101"]
 "src/reach/engine.py" = ["S101"]
+"src/reach/report.py" = ["E501"]  # the embedded page is HTML, CSS and JS, not Python
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

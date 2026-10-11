@@ -43,8 +43,17 @@ _PLACEHOLDER = re.compile(r"\$\{[^}]*\}")
 
 
 def format_glob(arn_format: str) -> str:
-    """'arn:${Partition}:s3:::${BucketName}/${ObjectName}' -> 'arn:*:s3:::*/*'."""
-    return _PLACEHOLDER.sub("*", arn_format)
+    """'arn:${Partition}:s3:::${BucketName}/${ObjectName}' -> 'arn:?*:s3:::?*/?*'.
+
+    A placeholder is never empty in a real ARN (AWS fills in every region, account and name the format has),
+    so it matches one character or more. With `*` a witness could name 'arn:aws:s3:::accesspoint//object/'.
+    """
+    return _PLACEHOLDER.sub("?*", arn_format)
+
+
+def _simplest_first(globs: set[str]) -> tuple[str, ...]:
+    """Fewest placeholders first: the plainest resource type is tried first and gives the witness."""
+    return tuple(sorted(globs, key=lambda g: (g.count("*"), g)))
 
 
 def key_pattern(key: str) -> str:
@@ -104,7 +113,7 @@ class Catalog:
             data = json.load(fh)
         formats = data.get("resource_formats", {})
         action_resources = {
-            action.lower(): tuple(sorted({format_glob(f) for r in types for f in formats.get(r, [])}))
+            action.lower(): _simplest_first({format_glob(f) for r in types for f in formats.get(r, [])})
             for action, types in data.get("action_resources", {}).items()
         }
         action_keys = {

@@ -24,8 +24,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .blast import HIGH_IMPACT, decide_in_snapshot
-from .engine import Environment
+from .engine import Environment, Verdict
 from .loaders import AuthorizationDetails
+from .reference import grants
 
 Question = tuple[str, str, str]  # (label, action pattern, resource pattern)
 
@@ -39,6 +40,8 @@ class Answer:
     witness: dict[str, Any] | None = None
     assumptions: list[str] = field(default_factory=list)
     error: str = ""
+    grants: list[str] = field(default_factory=list)  # ALLOWED: the statements that allow the witness
+    reasons: list[str] = field(default_factory=list)  # UNKNOWN: why it could not be decided
 
 
 @dataclass
@@ -93,7 +96,12 @@ def _audit_one(arn: str) -> Row:
             continue
         w = result.witness
         witness = {"action": w.action, "resource": w.resource, "context": w.context} if w else None
-        answers.append(Answer(label, action, resource, result.verdict.value, witness, list(result.assumptions)))
+        answer = Answer(label, action, resource, result.verdict.value, witness, list(result.assumptions))
+        if w and result.verdict is Verdict.ALLOWED:
+            answer.grants = grants(principal, w.action, w.resource, w.context, env, result.query.resource_policy)
+        if result.verdict is Verdict.UNKNOWN:
+            answer.reasons = list(result.reasons)
+        answers.append(answer)
     kind = "user" if arn in details.users else "role"
     return Row(arn, kind, answers, time.perf_counter() - started)
 

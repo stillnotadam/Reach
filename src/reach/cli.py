@@ -22,6 +22,7 @@ from .engine import Environment, Principal, Query, ResourcePolicy, Result, Verdi
 from .loaders import AuthorizationDetails, trust_policy
 from .org import Organization
 from .policy import PolicyError, load_policy_file
+from .report import to_html
 from .sarif import to_sarif
 from .trifecta import LEGS, Assessment, assess_all
 
@@ -362,6 +363,12 @@ def cmd_audit(args: argparse.Namespace) -> int:
         print(json.dumps(asdict(report), indent=2, default=str))
     else:
         print(_render_audit(report, sys.stdout.isatty() and not args.no_colour))
+    if args.html:
+        notes = [f"Organization: {args.org}." if args.org else "No organization export given: SCPs and RCPs only "
+                 "from --scp."] + [f"SCP {s}." for s in args.scp]  # fmt: skip
+        Path(args.html).write_text(to_html(report, args.authz, notes), encoding="utf-8")
+        if not args.json:
+            print(f"wrote {args.html}", file=sys.stderr)
     return 1 if args.fail_on_allowed and any(a.verdict == "allowed" for r in report.rows for a in r.answers) else 0
 
 
@@ -438,6 +445,7 @@ def build_parser() -> argparse.ArgumentParser:
     aud.add_argument("--org", metavar="FILE", help="AWS Organizations export: the account's SCPs and RCPs apply")
     aud.add_argument("--workers", type=int, help="worker processes (default: one per CPU)")
     aud.add_argument("--json", action="store_true")
+    aud.add_argument("--html", metavar="FILE", help="also write a self-contained HTML report")
     aud.add_argument("--no-colour", action="store_true")
     aud.add_argument(
         "--fail-on-allowed", action="store_true", help="exit 1 if any high-impact action is proven allowed"

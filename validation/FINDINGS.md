@@ -53,6 +53,46 @@ hand and then checked against AWS. Each one is either a Reach bug that is now fi
   `true`/`false` domain. Tests: `test_bool_reads_any_case_true_and_treats_everything_else_as_false`,
   `test_bool_on_a_non_boolean_key_does_not_shrink_its_values` (both fail on the previous release).
 
+### 7. IP conditions: IPv6, mixed families and malformed values, measured
+
+- **Before:** Reach modelled IPv4 only. Any IPv6 network made the whole condition UNKNOWN.
+- **Probe:** `validation/ip_probe.py`, 684 simulator calls: four operators, 19 network lists, nine sources (IPv4,
+  IPv6 in several spellings, IPv4-mapped, IPv4-compatible, absent). What AWS does:
+  - the families never mix: `0.0.0.0/0` matches no IPv6 source, `::/0` no IPv4 source, and `10.0.0.0/8` does not
+    match `::a00:1`, the IPv6 address with the same number;
+  - an IPv4-mapped source (`::ffff:10.1.2.3`) is the IPv4 address it carries: it matches `10.0.0.0/8`, not `::/0`;
+  - a network value AWS cannot parse (`bogus`, `10.0.0.0/33`, a leading space, `::ffff:10.0.0.0/104`) makes the
+    condition false for `IpAddress` and `NotIpAddress` alike once the key is present, unless a valid network earlier in
+    the list already matched. With the key absent, the values are never read: `IpAddress` is false, `NotIpAddress` and
+    the `IfExists` forms are true;
+  - spellings are free: `2001:DB8:0:0:0:0:0:0/32` is `2001:db8::/32`, host bits are ignored (`10.1.2.3/8`), and a
+    zero-padded prefix (`/08`) is accepted.
+- **Model:** one 128-bit vector and an "is IPv4" flag (IPv4 in the low 32 bits), so CIDR matching is exact masking
+  for both families. A free IPv6 source is never IPv4-mapped. A malformed or IPv4-mapped network is decided exactly
+  for an absent key and is UNKNOWN for a present one.
+- **Caught on the way:** a first version stripped whitespace from network values; the probe showed AWS rejects
+  `" 10.0.0.0/8"`, so a Deny on it would have been read as matching. Removed before release.
+- **Result:** 460 cases decided by Reach and compared, 0 disagreements. Tests: `test_ipv6_conditions`,
+  `test_ip_families_never_mix`, `test_malformed_networks_decide_an_absent_key_exactly`.
+
+### 8. `StringEqualsIgnoreCase` compares full Unicode lowercase forms
+
+- **Before:** not modelled; every case-insensitive condition was UNKNOWN.
+- **The trap:** "ignore case" has several meanings. ASCII-only folding misses `É`/`é`. Java's `equalsIgnoreCase`
+  also matches long s with `s` and dotless i with `i`. A model that matches too little can prove DENIED a request
+  AWS allows; one that matches too much can do the opposite on a Deny.
+- **Probe:** `validation/case_probe.py`, 42 simulator calls over pairs chosen to separate the candidates. AWS
+  matches `K` (Kelvin sign) with `k`, `ẞ` with `ß`, `É` with `é`; it does not match long s with `s`, dotless or dotted
+  I with `i`, the micro sign with Greek mu, or `ß` with `SS`. That is exactly "the full Unicode lowercase forms are
+  equal", and rules out both ASCII folding and Java's rule. A side result: IAM rejects any policy containing text
+  outside Latin-1 (`ValidationError`), so a policy value is always Latin-1.
+- **Model:** each character of the policy value's lowercase becomes the set of characters whose lowercase it is:
+  Latin-1 itself plus four others (Kelvin sign, Angstrom sign, capital sharp s, `Ÿ`); `tests/test_reference_data.py`
+  checks that list against the whole Unicode table. A value outside Latin-1 is not modelled. Also under
+  `ForAnyValue`/`ForAllValues`.
+- **Result:** 42 compared, 0 disagreements. Tests: `test_string_equals_ignore_case_compares_lowercase_forms`,
+  `test_ignore_case_denies_are_proofs_over_every_spelling`, `test_ignore_case_set_operator_and_text_iam_rejects`.
+
 ## Modelling gaps (fixed with AWS's Service Authorization Reference)
 
 ### 2. Actions apply only to their own resource types
@@ -126,3 +166,6 @@ hand and then checked against AWS. Each one is either a Reach bug that is now fi
 | 11, 12, 13 | 400 each | 652 | 0 | policy variables (finding 5): 378 compared cases use them |
 | 21, 22, 23 | 400 each | 682 | 1, then 0 | set operators (268 cases): finding 6, then 0 after the fix |
 | 24 | 2000 | 1089 | 0 | 394 cases with set operators, 630 with policy variables |
+| ip_probe | 684 | 460 | 0 | finding 7: IPv6, mixed families, mapped sources, malformed networks |
+| case_probe | 42 | 42 | 0 | finding 8: StringEqualsIgnoreCase and its Unicode edge cases |
+| 51 | 600 | 320 | 0 | random cases with IPv6 networks and sources, malformed networks |

@@ -71,6 +71,11 @@ across worker processes: 5,000 principals, 45,000 decisions, in about 40 seconds
 UNKNOWN verdicts ([benchmarks](docs/BENCHMARKS.md)). `--json` for machine output, `--fail-on-allowed` for CI,
 `--scp LAYER=FILE` to apply SCPs.
 
+`--html report.html` also writes the audit as one self-contained page: the matrix (filter, sort, narrow to one
+question), and for every cell the witness request, the policy statements that allow it, what an UNKNOWN depends on,
+and the `reach can` command that reproduces it. No network and no dependencies, so it works as a CI artifact or an
+email attachment, and policy text is never parsed as HTML.
+
 ## Agents
 
 ```console
@@ -147,8 +152,12 @@ Alerts keep their identity when lines move, and no secret value is ever written 
   `ForAllValues` on them passes when the key is absent). Each multi-valued key is a bounded set; the bound is one
   element per set condition on that key plus one, which is enough for any satisfying request to have a satisfying
   subset of that size, so DENIED stays a proof.
-  - IP keys are 32-bit bitvectors, so CIDR matching is exact; time keys are epoch seconds, and `aws:CurrentTime` and
-    `aws:EpochTime` share one clock, so a policy cannot be satisfied by two inconsistent times.
+  - IP keys are 128-bit bitvectors holding IPv4 and IPv6 apart, so CIDR matching is exact for both families, with
+    AWS's rules for mixed families, IPv4-mapped sources and malformed networks measured on its simulator; time keys
+    are epoch seconds, and `aws:CurrentTime` and `aws:EpochTime` share one clock, so a policy cannot be satisfied by
+    two inconsistent times.
+- `StringEqualsIgnoreCase` as AWS does it, measured: equal full Unicode lowercase forms (the Kelvin sign matches
+  `k`; long s does not match `s`, although Java's `equalsIgnoreCase` says it does).
 - The principal's own context is pinned: `aws:PrincipalArn`, `aws:PrincipalAccount`, `aws:PrincipalTag/*`,
   `aws:username`.
 - Policy variables (`${aws:username}`, `${aws:PrincipalTag/team, 'default'}`, `${*}`) in `Resource` and String
@@ -160,8 +169,8 @@ Alerts keep their identity when lines move, and no secret value is ever written 
 
 These are always reported as `UNKNOWN` rather than guessed: set operators with numeric, date, IP or `Bool` operators,
 or with `IfExists`; multi-valued keys without a set operator; policy variables over IP, time or multi-valued keys or
-inside ARN operators; IPv6 networks; decimal or signed numbers; `StringEqualsIgnoreCase` and `Binary*`. Whether a `Principal: "*"` grant is
-capped by a permissions boundary or session policy is reported as `UNKNOWN` until verified against AWS. See the [roadmap](ROADMAP.md).
+inside ARN operators; IP networks AWS cannot parse, when the key is present; decimal or signed numbers; `Binary*`.
+Whether a `Principal: "*"` grant is capped by a permissions boundary or session policy is reported as `UNKNOWN` until verified against AWS. See the [roadmap](ROADMAP.md).
 
 ## How Reach checks itself
 

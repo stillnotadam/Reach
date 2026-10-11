@@ -79,24 +79,29 @@ VARIABLE_VALUES = ["${aws:username}", "${aws:PrincipalTag/team}", "${aws:Princip
 
 # Context keys a request may carry, with values policies and requests draw from.
 KEYS = {
-    "aws:SourceVpc": ["vpc-1", "vpc-2", "vpc-10"],
+    "aws:SourceVpc": ["vpc-1", "VPC-1", "vpc-2", "vpc-10"],
     "aws:MultiFactorAuthPresent": ["true", "false"],
     "aws:RequestedRegion": ["eu-west-1", "us-east-1"],
-    "s3:prefix": ["home/", "home/a", "tmp/"],
+    "s3:prefix": ["home/", "home/a", "home/k", "tmp/"],
     "s3:max-keys": ["5", "10", "0100", "500", "abc", "1.5"],
 }
-SOURCE_IPS = ["10.1.2.3", "192.168.1.7", "192.168.2.1", "8.8.8.8", "2001:db8::5"]
+SOURCE_IPS = ["10.1.2.3", "192.168.1.7", "192.168.2.1", "8.8.8.8", "2001:db8::5", "2001:db8:5::1", "2001:db9::1",
+              "::ffff:10.1.2.3"]  # fmt: skip
 EPOCHS = [1_700_000_000, 1_767_225_599, 1_767_225_600, 1_767_225_601, 1_800_000_000]
-NETWORKS = ["10.0.0.0/8", "192.168.1.0/24", "192.168.1.7", "2001:db8::/32"]
+NETWORKS = ["10.0.0.0/8", "192.168.1.0/24", "192.168.1.7", "2001:db8::/32", "2001:db8:5::/48", "::/0", "0.0.0.0/0",
+            "bogus"]  # fmt: skip
 MOMENTS = ["2026-01-01T00:00:00Z", "1767225600", "2027-06-01"]
 COMPARISONS = ["Equals", "NotEquals", "LessThan", "LessThanEquals", "GreaterThan", "GreaterThanEquals"]
 LIKE_VALUES = ["home/*", "vpc-?", "*", "eu-*", "tmp/"]
 TAGS = [{}, {"team": "data"}, {"team": "web"}]
 
-POSITIVE = ["StringEquals", "StringLike", "StringEqualsIfExists", "StringLikeIfExists", "Bool", "BoolIfExists"]
-NEGATED = ["StringNotEquals", "StringNotLike", "StringNotEqualsIfExists"]
+POSITIVE = ["StringEquals", "StringLike", "StringEqualsIfExists", "StringLikeIfExists", "Bool", "BoolIfExists",
+            "StringEqualsIgnoreCase"]  # fmt: skip
+NEGATED = ["StringNotEquals", "StringNotLike", "StringNotEqualsIfExists", "StringNotEqualsIgnoreCase"]
+# Request values only: other spellings of policy values. "K" is the Kelvin sign, which lowercases to k.
+# (Policies stay Latin-1, the only text IAM accepts in one.)
+SPELLINGS = {"s3:prefix": ["HOME/A", "home/K", "Home/K"], "aws:SourceVpc": ["Vpc-2", "VPC-10"]}
 UNMODELLED = [
-    ("StringEqualsIgnoreCase", "aws:SourceVpc", "VPC-1"),
     ("BinaryEquals", "s3:prefix", "QUJD"),
     ("ForAnyValue:StringEquals", "aws:TagKeys", "env"),
     ("StringEquals", "s3:prefix", "${aws:username}/"),
@@ -126,8 +131,9 @@ class Case:
     resource_policy: ResourcePolicy | None = None
 
 
-TAG_KEYS = ["env", "team", "cost", "aws:stack"]
-SET_OPS = ["StringEquals", "StringLike", "StringNotEquals", "StringNotLike"]
+TAG_KEYS = ["env", "team", "cost", "aws:stack", "Env"]
+SET_OPS = ["StringEquals", "StringLike", "StringNotEquals", "StringNotLike", "StringEqualsIgnoreCase",
+           "StringNotEqualsIgnoreCase"]  # fmt: skip
 
 
 def _set_condition(rng: random.Random) -> tuple[str, str, list[str]]:
@@ -247,7 +253,7 @@ def random_case(rng: random.Random) -> Case:
 def random_context(rng: random.Random) -> dict[str, ContextValue]:
     ctx: dict[str, ContextValue] = {}
     for key, values in KEYS.items():
-        ctx[key] = None if rng.random() < 0.3 else rng.choice([*values, "other"])
+        ctx[key] = None if rng.random() < 0.3 else rng.choice([*values, *SPELLINGS.get(key, []), "other"])
     # Every real request goes to some region (found by the AWS simulator harness).
     ctx["aws:RequestedRegion"] = rng.choice([*KEYS["aws:RequestedRegion"], "other"])
     ctx["aws:SourceIp"] = None if rng.random() < 0.2 else rng.choice(SOURCE_IPS)

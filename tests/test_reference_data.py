@@ -25,7 +25,7 @@ ALLOW_ALL = {"Effect": "Allow", "Action": "*", "Resource": "*"}
 
 
 def test_format_and_key_globs():
-    assert format_glob("arn:${Partition}:s3:::${BucketName}/${ObjectName}") == "arn:*:s3:::*/*"
+    assert format_glob("arn:${Partition}:s3:::${BucketName}/${ObjectName}") == "arn:?*:s3:::?*/?*"
     assert key_pattern("aws:RequestTag/${TagKey}") == "aws:RequestTag/*"
     assert key_pattern("s3:prefix") == "s3:prefix"
 
@@ -62,3 +62,19 @@ def test_star_query_over_every_action_stays_fast():
     r = decide(principal(ALLOW_ALL), Query("*", "*"))
     assert r.verdict is Verdict.ALLOWED
     assert time.perf_counter() - start < 30
+
+
+def test_ignore_case_classes_cover_every_unicode_character():
+    # Every character whose full lowercase is one Latin-1 character must be in that character's class:
+    # a missing one would be a spelling AWS matches and Reach does not.
+    from reach.values import ignore_case_classes  # noqa: PLC0415
+
+    expected: dict[str, set[str]] = {}
+    for cp in range(0x110000):
+        c = chr(cp)
+        lower = c.lower()
+        if len(lower) == 1 and ord(lower) <= 0xFF:
+            expected.setdefault(lower, set()).add(c)
+    for target, members in expected.items():
+        classes = ignore_case_classes(target)
+        assert classes is not None and set(classes[0]) == members, target

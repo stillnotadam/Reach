@@ -36,10 +36,11 @@ from .values import (
     RCP_EXEMPT_ACTIONS,
     RCP_SERVICES,
     TIME_KEYS,
+    ignore_case_equal,
     parse_bool,
     parse_int,
     parse_ip,
-    parse_ipv4_network,
+    parse_ip_network,
     parse_time,
     principal_type,
     username,
@@ -111,7 +112,7 @@ _COMPARE = {
 }
 _STRINGISH = frozenset(
     {"StringEquals", "StringNotEquals", "StringLike", "StringNotLike", "ArnEquals", "ArnLike", "ArnNotEquals",
-     "ArnNotLike", "Bool"}
+     "ArnNotLike", "Bool", "StringEqualsIgnoreCase", "StringNotEqualsIgnoreCase"}
 )  # fmt: skip
 
 
@@ -125,6 +126,9 @@ def _family(base: str) -> tuple[str, str] | None:
 
 def _modelled(base: str, kind: str, values: tuple[str, ...]) -> bool:
     """Whether an operator is modelled at all, independent of the request's value."""
+    if base in ("StringEqualsIgnoreCase", "StringNotEqualsIgnoreCase"):
+        # IAM accepts only Latin-1 text in a policy; other text is not modelled (like the engine).
+        return kind == "string" and all(ord(c) <= 0xFF for v in values for c in literal(v))
     if base in _STRINGISH:
         return kind == "string"
     fam = _family(base)
@@ -133,7 +137,7 @@ def _modelled(base: str, kind: str, values: tuple[str, ...]) -> bool:
         parse = parse_int if family == "Numeric" else parse_time
         return kind == ("string" if family == "Numeric" else "time") and all(parse(v) is not None for v in values)
     if base in ("IpAddress", "NotIpAddress"):
-        return kind == "ip" and all(parse_ipv4_network(v) is not None for v in values)
+        return kind == "ip" and all(parse_ip_network(v) is not None for v in values)
     return False
 
 
@@ -141,6 +145,8 @@ def _hit(base: str, value: str, values: tuple[str, ...]) -> Tri:
     """Does a present value match a modelled operator's value list (before negation)?"""
     if base in ("StringEquals", "StringNotEquals"):
         return value in {literal(v) for v in values}
+    if base in ("StringEqualsIgnoreCase", "StringNotEqualsIgnoreCase"):
+        return any(ignore_case_equal(value, literal(v)) for v in values)
     if base in ("StringLike", "StringNotLike"):
         return any(_glob(v).fullmatch(value) for v in values)
     if base == "Bool":
@@ -160,8 +166,8 @@ def _hit(base: str, value: str, values: tuple[str, ...]) -> Tri:
     if address is None:
         return None
     is_v4, number = address
-    networks = [n for n in (parse_ipv4_network(v) for v in values) if n is not None]
-    return is_v4 and any((number & mask) == net for net, mask in networks)
+    networks = [n for n in (parse_ip_network(v) for v in values) if n is not None]
+    return any(v4 == is_v4 and (number & mask) == net for v4, net, mask in networks)
 
 
 def _set_condition(cond: Condition, req: Request, base: str, if_exists: bool) -> Tri:
@@ -171,7 +177,7 @@ def _set_condition(cond: Condition, req: Request, base: str, if_exists: bool) ->
     kind = "ip" if k in IP_KEYS else "time" if k in TIME_KEYS else "string"
     if qualifier not in ("ForAnyValue", "ForAllValues") or if_exists or inner == "Bool" or inner not in _STRINGISH:
         return None
-    if kind != "string":
+    if not _modelled(inner, kind, cond.values):
         return None
     raw = req.context.get(k)
     elements = [] if raw is None else [raw] if isinstance(raw, str) else list(raw)
@@ -196,6 +202,8 @@ def _condition(cond: Condition, req: Request, variables: bool) -> Tri:
     value = req.context.get(k)
     if base == "Null":
         return any((value is None) == (v.lower() == "true") for v in cond.values)
+    if base in ("IpAddress", "NotIpAddress") and kind == "ip" and value is None:
+        return True if "Not" in base else if_exists  # decided before AWS parses the networks
     if is_multivalued(k) or not _modelled(base, kind, cond.values):
         return None
     if value is None:
@@ -233,6 +241,24 @@ def _denies(policies: list[Policy], req: Request) -> Tri:
     return _or(_statement(s, req) for p in policies for s in p.statements if s.effect == "Deny")
 
 
+def _request(
+    principal: Principal, action: str, resource: str, context: dict[str, ContextValue], env: Environment
+) -> Request:
+    # Principal-derived keys first, so explicitly pinned keys override them, as in the engine.
+    full: dict[str, ContextValue] = {
+        "aws:PrincipalArn": principal.arn,
+        "aws:PrincipalAccount": principal.account,
+        "aws:PrincipalType": principal_type(principal.arn),
+        # Reach's principals are IAM users and role sessions, never AWS service principals.
+        "aws:PrincipalIsAWSService": "false",
+        "aws:username": username(principal.arn),
+    }
+    full.update({f"aws:PrincipalTag/{k}": v for k, v in principal.tags.items()})
+    full.update(env.org_context)
+    full.update(context)
+    return Request(action, resource, full)
+
+
 def evaluate(
     principal: Principal,
     action: str,
@@ -246,19 +272,7 @@ def evaluate(
     A key missing from `context` is absent.
     """
     env = env or Environment()
-    # Principal-derived keys first, so explicitly pinned keys override them, as in the engine.
-    full: dict[str, ContextValue] = {
-        "aws:PrincipalArn": principal.arn,
-        "aws:PrincipalAccount": principal.account,
-        "aws:PrincipalType": principal_type(principal.arn),
-        # Reach's principals are IAM users and role sessions, never AWS service principals.
-        "aws:PrincipalIsAWSService": "false",
-        "aws:username": username(principal.arn),
-    }
-    full.update({f"aws:PrincipalTag/{k}": v for k, v in principal.tags.items()})
-    full.update(env.org_context)
-    full.update(context)
-    req = Request(action, resource, full)
+    req = _request(principal, action, resource, context, env)
 
     scps_apply = not env.management_account and not principal.is_service_linked
     boundary = [principal.boundary] if principal.boundary else []
@@ -317,3 +331,31 @@ def _resource_grant(principal: Principal, req: Request, rp: ResourcePolicy, iden
         return _or([direct, _and([granted[Match.ACCOUNT], identity_path])])
     # An account grant only delegates (verified on live S3; FINDINGS.md, finding 4).
     return _or([identity_path, direct])
+
+
+def grants(
+    principal: Principal,
+    action: str,
+    resource: str,
+    context: dict[str, ContextValue],
+    env: Environment | None = None,
+    resource_policy: ResourcePolicy | None = None,
+) -> list[str]:
+    """The Allow statements that match this exact request, as "policy / Sid": what a witness is allowed by.
+
+    Identity policies first, then the resource policy's statements that name this principal. Only statements
+    that match outright are listed; one whose conditions Reach does not model is not.
+    """
+    req = _request(principal, action, resource, context, env or Environment())
+    candidates = [st for p in principal.identity_policies for st in p.statements if st.effect == "Allow"]
+    if resource_policy is not None:
+        candidates += [
+            st for st in resource_policy.policy.statements if st.effect == "Allow" and classify(st, principal.arn)
+        ]
+    out = []
+    for st in candidates:
+        if _statement(st, req) is True:
+            label = f"{st.source} / {st.sid}" if st.sid else st.source
+            if label not in out:
+                out.append(label)
+    return out

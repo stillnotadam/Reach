@@ -72,6 +72,30 @@ def test_wildcard_query_is_existential_and_returns_a_witness():
     assert r.witness.resource.startswith("arn:aws:iam::123456789012:role/app-")
 
 
+def test_witness_arns_read_like_real_ones():
+    # Unconstrained names come out of Z3 as " " or nothing; the witness shows a region, the account, a name.
+    admin = Principal(ARN, [pol(allow("*", "*"))])
+
+    def witness(principal, action):
+        return decide(principal, Query(action, "*")).witness.resource  # with the catalogue: real resource types
+
+    assert witness(admin, "secretsmanager:GetSecretValue") == (
+        "arn:aws:secretsmanager:us-east-1:123456789012:secret:example"
+    )
+    assert witness(admin, "s3:GetObject") == "arn:aws:s3:::example/example"
+    prefix = Principal(ARN, [pol(allow("ssm:GetParameter", "arn:aws:ssm:eu-west-1:123456789012:parameter/app/*"))])
+    assert witness(prefix, "ssm:GetParameter") == ("arn:aws:ssm:eu-west-1:123456789012:parameter/app/example")
+
+
+def test_tidying_never_changes_what_the_witness_proves():
+    # Only names ending in a space are allowed: "example" would not match, so the solver's name stays.
+    odd = [pol(allow("s3:GetObject", f"{BUCKET}/* "))]
+    w = can(odd, "s3:GetObject", "*").witness
+    assert w.resource.startswith(f"{BUCKET}/") and w.resource.endswith(" ")
+    # Without a catalogue the service is a free string too; the action's own service is filled in.
+    assert can([pol(allow("*", "*"))], "kms:Decrypt", "*").witness.resource.startswith("arn:aws:kms:")
+
+
 # --- ARN segment semantics ----------------------------------------------------
 
 
@@ -236,10 +260,10 @@ def test_unmodelled_allow_condition_gives_unknown_not_allowed():
 
 
 def test_unmodelled_deny_condition_gives_unknown():
-    ip6_deny = deny("s3:*", Condition={"IpAddress": {"aws:SourceIp": "2001:db8::/32"}})
-    r = can([pol(allow("s3:*"), ip6_deny)], "s3:GetObject", "*")
+    decimal_deny = deny("s3:*", Condition={"NumericGreaterThan": {"s3:max-keys": "10.5"}})
+    r = can([pol(allow("s3:*"), decimal_deny)], "s3:GetObject", "*")
     # The key only appears in an unmodelled condition, so it must not leak into the witness.
-    assert "aws:SourceIp" not in r.witness.context
+    assert "s3:max-keys" not in r.witness.context
     assert r.verdict is Verdict.UNKNOWN
 
 
@@ -409,6 +433,97 @@ def test_ip_conditions():
     assert can(p, "s3:GetObject", "*", context={"aws:SourceIp": "8.8.8.8"}).verdict is Verdict.DENIED
     assert can(p, "s3:GetObject", "*", context={"aws:SourceIp": "192.168.1.8"}).verdict is Verdict.DENIED
     assert can(p, "s3:GetObject", "*", context={"aws:SourceIp": "2001:db8::1"}).verdict is Verdict.DENIED
+
+
+def test_ipv6_conditions():
+    office = allow("s3:*", Condition={"IpAddress": {"aws:SourceIp": ["2001:db8:1234::/48", "203.0.113.0/24"]}})
+    r = can([pol(office)], "s3:GetObject", "*")
+    assert r.verdict is Verdict.ALLOWED
+    source = r.witness.context["aws:SourceIp"]
+    assert source.startswith("2001:db8:1234:") or source.startswith("203.0.113.")
+    assert (
+        can([pol(office)], "s3:GetObject", "*", context={"aws:SourceIp": "2001:db8:1234:5::9"}).verdict
+        is Verdict.ALLOWED
+    )
+    assert (
+        can([pol(office)], "s3:GetObject", "*", context={"aws:SourceIp": "2001:db8:1235::1"}).verdict is Verdict.DENIED
+    )
+    # Spelling does not matter: upper case and zero padding are the same address.
+    padded = {"aws:SourceIp": "2001:0DB8:1234:0000::0001"}
+    assert can([pol(office)], "s3:GetObject", "*", context=padded).verdict is Verdict.ALLOWED
+
+
+def test_ip_families_never_mix():
+    # Measured on AWS (validation/ip_probe.py): 0.0.0.0/0 matches no IPv6 source and ::/0 no IPv4 source.
+    v4_only = [pol(allow("s3:*", Condition={"IpAddress": {"aws:SourceIp": "0.0.0.0/0"}}))]
+    assert can(v4_only, "s3:GetObject", "*", context={"aws:SourceIp": "2001:db8::1"}).verdict is Verdict.DENIED
+    assert can(v4_only, "s3:GetObject", "*").witness.context["aws:SourceIp"].count(".") == 3
+    v6_only = [pol(allow("s3:*", Condition={"IpAddress": {"aws:SourceIp": "::/0"}}))]
+    assert can(v6_only, "s3:GetObject", "*", context={"aws:SourceIp": "10.1.2.3"}).verdict is Verdict.DENIED
+    # The IPv4 address 10.0.0.1 is not the IPv6 address ::a00:1, though both are the number 167772161.
+    ten = [pol(allow("s3:*", Condition={"IpAddress": {"aws:SourceIp": "10.0.0.0/8"}}))]
+    assert can(ten, "s3:GetObject", "*", context={"aws:SourceIp": "::a00:1"}).verdict is Verdict.DENIED
+    # An IPv4-mapped source is the IPv4 address it carries.
+    assert can(ten, "s3:GetObject", "*", context={"aws:SourceIp": "::ffff:10.1.2.3"}).verdict is Verdict.ALLOWED
+    # And a free IPv6 witness is never an IPv4-mapped one.
+    corp_v6 = [pol(allow("s3:*"), deny("*", Condition={"IpAddress": {"aws:SourceIp": "0.0.0.0/0"}}))]
+    source = can(corp_v6, "s3:GetObject", "*").witness.context["aws:SourceIp"]
+    assert source is None or not source.startswith("::ffff:")
+
+
+def test_malformed_networks_decide_an_absent_key_exactly():
+    # AWS checks presence before it reads the networks (validation/ip_probe.py).
+    bad = [pol(allow("s3:*"), deny("*", Condition={"IpAddress": {"aws:SourceIp": "bogus"}}))]
+    r = can(bad, "s3:GetObject", "*")
+    assert r.verdict is Verdict.ALLOWED and r.witness.context["aws:SourceIp"] is None
+    present = can(bad, "s3:GetObject", "*", context={"aws:SourceIp": "10.1.2.3"})
+    assert present.verdict is Verdict.UNKNOWN
+    not_bad = [pol(allow("s3:*", Condition={"NotIpAddress": {"aws:SourceIp": ["::ffff:10.0.0.0/104"]}}))]
+    assert can(not_bad, "s3:GetObject", "*").verdict is Verdict.ALLOWED  # absent: NotIpAddress holds
+
+
+def test_string_equals_ignore_case_compares_lowercase_forms():
+    # Measured on AWS (validation/case_probe.py): equal full Unicode lowercase forms, nothing more.
+    home = [pol(allow("s3:ListBucket", Condition={"StringEqualsIgnoreCase": {"s3:prefix": "Home/K"}}))]
+
+    def prefix(value):
+        return can(home, "s3:ListBucket", "*", context={"s3:prefix": value}).verdict
+
+    assert prefix("home/k") is Verdict.ALLOWED and prefix("HOME/K") is Verdict.ALLOWED
+    assert prefix("home/K") is Verdict.ALLOWED  # the Kelvin sign lowercases to k
+    assert prefix("home/kk") is Verdict.DENIED and prefix("home/") is Verdict.DENIED
+    witness = can(home, "s3:ListBucket", "*").witness.context["s3:prefix"]
+    assert witness.lower() == "home/k"
+    sharp = [pol(allow("s3:ListBucket", Condition={"StringEqualsIgnoreCase": {"s3:prefix": "straße"}}))]
+    assert can(sharp, "s3:ListBucket", "*", context={"s3:prefix": "STRAẞE"}).verdict is Verdict.ALLOWED
+    assert can(sharp, "s3:ListBucket", "*", context={"s3:prefix": "STRASSE"}).verdict is Verdict.DENIED
+    # Java's equalsIgnoreCase would match these; AWS does not.
+    for policy_value, request_value in (("s", "ſ"), ("i", "ı"), ("i", "İ"), ("µ", "μ")):
+        p = [pol(allow("s3:ListBucket", Condition={"StringEqualsIgnoreCase": {"s3:prefix": policy_value}}))]
+        assert can(p, "s3:ListBucket", "*", context={"s3:prefix": request_value}).verdict is Verdict.DENIED
+
+
+def test_ignore_case_denies_are_proofs_over_every_spelling():
+    # A Deny on one spelling covers them all, so no spelling slips past it.
+    p = [
+        pol(
+            allow("s3:ListBucket", Condition={"StringEquals": {"s3:prefix": ["admin", "ADMIN", "Admin", "aDMIN"]}}),
+            deny("s3:*", Condition={"StringEqualsIgnoreCase": {"s3:prefix": "admin"}}),
+        )
+    ]
+    assert can(p, "s3:ListBucket", "*").verdict is Verdict.DENIED
+    negated = [pol(allow("s3:ListBucket"), deny("s3:*", Condition={"StringNotEqualsIgnoreCase": {"s3:prefix": "Tmp"}}))]
+    r = can(negated, "s3:ListBucket", "*")
+    assert r.verdict is Verdict.ALLOWED and r.witness.context["s3:prefix"].lower() == "tmp"
+
+
+def test_ignore_case_set_operator_and_text_iam_rejects():
+    tags = [pol(allow("s3:*", Condition={"ForAllValues:StringEqualsIgnoreCase": {"aws:TagKeys": ["Env", "Team"]}}))]
+    assert can(tags, "s3:GetObject", "*", context={"aws:TagKeys": ["ENV", "team"]}).verdict is Verdict.ALLOWED
+    assert can(tags, "s3:GetObject", "*", context={"aws:TagKeys": ["env", "cost"]}).verdict is Verdict.DENIED
+    # IAM only accepts Latin-1 in a policy; anything else is not modelled rather than guessed.
+    greek = [pol(allow("s3:ListBucket", Condition={"StringEqualsIgnoreCase": {"s3:prefix": "σ"}}))]
+    assert can(greek, "s3:ListBucket", "*").verdict is Verdict.UNKNOWN
 
 
 def test_date_conditions_share_one_clock():

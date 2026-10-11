@@ -3,8 +3,13 @@
 Most condition keys are strings, but IAM has three other families that
 the engine models with their own Z3 sorts:
 
-* IP keys (aws:SourceIp, aws:VpcSourceIp): a 32-bit bitvector plus an
-  "is IPv4" flag, so CIDR matching is exact bit masking;
+* IP keys (aws:SourceIp, aws:VpcSourceIp): a 128-bit bitvector plus an
+  "is IPv4" flag (an IPv4 address in the low 32 bits), so CIDR matching is
+  exact bit masking for both families. An IPv4 network only ever matches
+  IPv4 sources and an IPv6 network IPv6 sources. AWS reports an IPv4 client
+  as IPv4, so a source address is never IPv4-mapped IPv6 (::ffff:a.b.c.d):
+  a mapped value is read as the IPv4 address it carries, and a policy
+  network inside ::ffff:0:0/96 is left unmodelled;
 * time keys: integer epoch seconds. aws:CurrentTime and aws:EpochTime are
   two spellings of the same instant and share one variable;
 * numeric operators work on ordinary string keys whose value is a digit
@@ -77,8 +82,6 @@ def username(arn: str) -> str | None:
 
 MAX_EPOCH = 253_402_300_799  # 9999-12-31T23:59:59Z
 
-# Representative address used when a witness needs "some IPv6 source".
-IPV6_WITNESS = "2001:db8::1"
 
 _INT = re.compile(r"[0-9]+")
 _DATE_FORMATS = ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%MZ", "%Y-%m-%d")
@@ -108,25 +111,74 @@ def render_time(epoch: int, style: str) -> str:
     return dt.datetime.fromtimestamp(epoch, tz=dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def parse_ipv4_network(text: str) -> tuple[int, int] | None:
-    """An IPv4 address or CIDR as (network, mask) integers; None for IPv6 or malformed input."""
+IP_BITS = 128
+_MAPPED = ipaddress.ip_network("::ffff:0:0/96")
+
+
+def parse_ip_network(text: str) -> tuple[bool, int, int] | None:
+    """An address or CIDR as (is_ipv4, network, mask); None if malformed or IPv4-mapped IPv6.
+
+    Both families share one 128-bit space: an IPv4 network sits in the low 32 bits, and is_ipv4 keeps the
+    families apart, so 10.0.0.0/8 never matches the IPv6 address ::a00:1.
+    """
+    if "%" in text:  # an IPv6 zone index (fe80::1%eth0): Python takes it, a policy value cannot mean it
+        return None
     try:
         net = ipaddress.ip_network(text, strict=False)
     except ValueError:
         return None
-    if net.version != 4:
+    if net.version == 6 and net.subnet_of(_MAPPED):  # type: ignore[arg-type]
         return None
-    return int(net.network_address), int(net.netmask)
+    return net.version == 4, int(net.network_address), int(net.netmask)
 
 
 def parse_ip(text: str) -> tuple[bool, int] | None:
-    """(is_ipv4, value) for a request's source address; value is 0 for IPv6."""
+    """(is_ipv4, value) for a request's source address. An IPv4-mapped IPv6 address is the IPv4 it carries."""
+    if "%" in text:
+        return None
     try:
         addr = ipaddress.ip_address(text)
     except ValueError:
         return None
-    return (True, int(addr)) if addr.version == 4 else (False, 0)
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        addr = addr.ipv4_mapped
+    return addr.version == 4, int(addr)
 
 
-def render_ipv4(value: int) -> str:
-    return str(ipaddress.IPv4Address(value))
+def is_mapped(value: int) -> bool:
+    """Is a 128-bit value in ::ffff:0:0/96? A free IPv6 source never is (see the module docstring)."""
+    return int(_MAPPED.network_address) <= value <= int(_MAPPED.broadcast_address)
+
+
+def render_ip(is_v4: bool, value: int) -> str:
+    return str(ipaddress.IPv4Address(value) if is_v4 else ipaddress.IPv6Address(value))
+
+
+# --- case-insensitive strings (StringEqualsIgnoreCase) --------------------------------------------------------
+#
+# Measured on AWS (validation/FINDINGS.md, finding 8): two strings are equal ignoring case when their full Unicode
+# lowercase forms are equal. The Kelvin sign K matches "k" and capital sharp s matches "ß"; but long s, dotless i,
+# dotted capital I and the micro sign match nothing new, which rules out ASCII-only folding and Java's
+# equalsIgnoreCase. IAM accepts only Latin-1 text in a policy, so a policy value's lowercase is Latin-1, and the
+# request characters that lowercase to a Latin-1 character are Latin-1 itself plus these four.
+_LOWERS_INTO_LATIN_1 = {"K": "k", "Å": "å", "ẞ": "ß", "Ÿ": "ÿ"}
+
+
+def ignore_case_equal(a: str, b: str) -> bool:
+    return a.lower() == b.lower()
+
+
+def ignore_case_classes(text: str) -> list[tuple[str, ...]] | None:
+    """For each character of text's lowercase, every character whose lowercase it is.
+
+    None when text has a character outside Latin-1: IAM rejects such a policy, and its lowercase forms are not
+    covered here.
+    """
+    if any(ord(c) > 0xFF for c in text):
+        return None
+    classes = []
+    for c in text.lower():
+        members = [chr(x) for x in range(0x100) if chr(x).lower() == c]
+        members += [k for k, v in _LOWERS_INTO_LATIN_1.items() if v == c]
+        classes.append(tuple(members))
+    return classes

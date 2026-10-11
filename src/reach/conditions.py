@@ -2,7 +2,7 @@
 
 Every condition key the policies mention gets one presence flag, shared by
 every operator that looks at it, plus a value of the key's sort: a string,
-an IPv4 bitvector (IP keys) or epoch seconds (time keys; see values.py).
+a 128-bit IP bitvector (IP keys) or epoch seconds (time keys; see values.py).
 Keys we know something about (the principal's ARN, its tags, values the
 user pinned on the command line) are fixed instead.
 
@@ -22,19 +22,21 @@ from functools import lru_cache
 
 import z3
 
-from .patterns import arn_glob, glob, has_wildcard, sval
+from .patterns import arn_glob, glob, has_wildcard, literal_re, sval
 from .policy import Condition, Statement
 from .values import (
     ALWAYS_PRESENT_KEYS,
     ALWAYS_PRESENT_TIME_GROUPS,
     BOOLEAN_KEYS,
+    IP_BITS,
     IP_KEYS,
     MAX_EPOCH,
     TIME_KEYS,
+    ignore_case_classes,
     parse_bool,
     parse_int,
     parse_ip,
-    parse_ipv4_network,
+    parse_ip_network,
     parse_time,
 )
 
@@ -57,7 +59,9 @@ STRING_OPS = {
     "ArnEquals": "arn",
     "ArnLike": "arn",
     "Bool": "bool",
+    "StringEqualsIgnoreCase": "ieq",
     "StringNotEquals": "eq",
+    "StringNotEqualsIgnoreCase": "ieq",
     "StringNotLike": "like",
     "ArnNotEquals": "arn",
     "ArnNotLike": "arn",
@@ -200,7 +204,11 @@ class Context:
             # A set with no elements is the key being absent, as in AWS.
             self.domain.append(self.presence[slot] == z3.Or([a for a, _ in slots]))
         elif kind == "ip":
-            self.ips[k] = (z3.Bool(f"ipv4_{n}"), z3.BitVec(f"ip_{n}", 32))
+            is_v4, address = z3.Bool(f"ipv4_{n}"), z3.BitVec(f"ip_{n}", IP_BITS)
+            self.ips[k] = (is_v4, address)
+            high = z3.Extract(IP_BITS - 1, 32, address)
+            # An IPv4 address lives in the low 32 bits; an IPv6 source is never IPv4-mapped (values.py).
+            self.domain.append(z3.If(is_v4, high == 0, high != 0xFFFF))
         else:
             t = z3.Int(f"time_{slot}")
             self.times[slot] = t
@@ -243,7 +251,7 @@ class Context:
         if v is not _FREE:
             parsed = parse_ip(v) if v is not None else None
             is_v4, value = parsed if parsed else (False, 0)
-            return z3.BoolVal(is_v4), z3.BitVecVal(value, 32)
+            return z3.BoolVal(is_v4), z3.BitVecVal(value, IP_BITS)
         self._ensure(name)
         return self.ips[name.lower()]
 
@@ -295,6 +303,10 @@ def _string_match(kind: str, value: z3.SeqRef, values: tuple[str, ...]) -> z3.Bo
     for v in values:
         if kind == "eq":
             terms.append(value == sval(v))
+        elif kind == "ieq":
+            # Equal lowercase forms (finding 8): each character, in any case that lowercases to it.
+            classes = ignore_case_classes(_text(v)) or []
+            terms.append(z3.InRe(value, _concat_re([z3.Union(*(literal_re(m) for m in c)) for c in classes])))
         elif kind == "bool":
             # Both sides are read as booleans: "true" in any case, or anything else (finding 6).
             is_true = z3.InRe(value, _TRUE_ANY_CASE)
@@ -304,6 +316,21 @@ def _string_match(kind: str, value: z3.SeqRef, values: tuple[str, ...]) -> z3.Bo
         else:  # arn
             terms.append(z3.InRe(value, arn_glob(v)) if has_wildcard(v) else value == sval(v))
     return _any(terms)
+
+
+def _text(value: str) -> str:
+    """A condition value as plain text: ${*} and ${?} arrive as private-use markers (see variables.py)."""
+    return value.replace("", "*").replace("", "?")
+
+
+def _latin_1(values: tuple[str, ...]) -> bool:
+    return all(ignore_case_classes(_text(v)) is not None for v in values)
+
+
+def _concat_re(parts: list[z3.ReRef]) -> z3.ReRef:
+    if not parts:
+        return z3.Re("")
+    return z3.Concat(*parts) if len(parts) > 1 else parts[0]
 
 
 def wrap_presence(base: str, if_exists: bool, present: z3.BoolRef, matched: z3.BoolRef) -> z3.BoolRef:
@@ -335,6 +362,9 @@ def encode_condition(cond: Condition, ctx: Context, stmt: Statement) -> z3.BoolR
     if base == "Null":
         terms = [z3.Not(ctx.present(cond.key)) if v.lower() == "true" else ctx.present(cond.key) for v in cond.values]
         return _any(terms)
+
+    if STRING_OPS.get(base) == "ieq" and not _latin_1(cond.values):
+        return ctx.opaque(stmt, f"{op} {cond.key} with text outside Latin-1, which IAM does not accept")
 
     if base in STRING_OPS and kind == "string":
         present, value = ctx.present(cond.key), ctx.string(cond.key)
@@ -368,13 +398,19 @@ def encode_condition(cond: Condition, ctx: Context, stmt: Statement) -> z3.BoolR
         return wrap_presence(base, if_exists, present, matched)
 
     if base in IP_OPS and kind == "ip":
-        networks = [parse_ipv4_network(v) for v in cond.values]
-        if any(n is None for n in networks):
-            return ctx.opaque(stmt, f"IPv6 or malformed network in {op} {cond.key}")
+        networks = [parse_ip_network(v) for v in cond.values]
         present = ctx.present(cond.key)
+        if any(n is None for n in networks):
+            # AWS looks at presence before it parses the values (measured: validation/FINDINGS.md, finding 7),
+            # so only a present key depends on how AWS reads the value. The opaque stays positive either way.
+            unknown = ctx.opaque(stmt, f"malformed or IPv4-mapped network in {op} {cond.key}")
+            if is_negated(base) or if_exists:
+                return z3.Or(z3.Not(present), unknown)
+            return z3.And(present, unknown)
         is_v4, address = ctx.ip(cond.key)
         valid = [n for n in networks if n is not None]
-        matched = z3.And(is_v4, _any([(address & mask) == net for net, mask in valid]))
+        family = {True: is_v4, False: z3.Not(is_v4)}
+        matched = _any([z3.And(family[v4], (address & mask) == net) for v4, net, mask in valid])
         return wrap_presence(base, if_exists, present, matched)
 
     return ctx.opaque(stmt, f"operator {op} on {cond.key} is not modelled yet")
@@ -390,7 +426,7 @@ def _encode_set(cond: Condition, ctx: Context, stmt: Statement, base: str, if_ex
     family = STRING_OPS.get(inner)
     if qualifier not in ("ForAnyValue", "ForAllValues") or if_exists or family in (None, "bool"):
         return ctx.opaque(stmt, f"set operator {cond.operator} on {cond.key}")
-    if kind not in ("string", "set"):
+    if kind not in ("string", "set") or (family == "ieq" and not _latin_1(cond.values)):
         return ctx.opaque(stmt, f"set operator {cond.operator} on {cond.key}")
     hits = []
     for member, value in ctx.elements(cond.key):

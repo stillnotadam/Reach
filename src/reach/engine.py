@@ -46,7 +46,8 @@ Verdicts:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import re
+from dataclasses import dataclass, field, replace
 from enum import Enum
 
 import z3
@@ -57,23 +58,27 @@ from .patterns import PRINTABLE, ArnVar, glob, has_wildcard, matches_any, sval
 from .policy import Policy, Statement
 from .principals import Match, classify
 from .values import (
-    IPV6_WITNESS,
     RCP_EXEMPT_ACTIONS,
     RCP_SERVICES,
     TIME_KEYS,
     principal_type,
-    render_ipv4,
+    render_ip,
     render_time,
     username,
 )
 from .variables import FREE, Pattern, SymbolicCondition, Var, resolve_statement
 
 SOLVER_TIMEOUT_MS = 30_000
+PREFERENCE_TIMEOUT_MS = 2_000  # per witness preference (see _model)
 RECENT_EPOCH = 1_577_836_800  # 2020-01-01: witnesses prefer plausible clock values
 
 
 class InconsistencyError(RuntimeError):
     """The solver and the reference evaluator disagree about a witness. Always a Reach bug."""
+
+
+WITNESS_REGION = "us-east-1"
+WITNESS_ACCOUNT = "111122223333"
 
 
 class Verdict(str, Enum):
@@ -496,7 +501,12 @@ def _model(enc: _Encoding, *constraints: z3.BoolRef) -> tuple[z3.CheckSatResult,
     """Find a model, preferring readable witnesses (printable strings, ARN-shaped resources)."""
     s = _solver()
     s.add(*constraints)
-    for preference in enc.preferences():
+    preferences = enc.preferences()
+    for i, preference in enumerate(preferences):
+        # A preference only picks a nicer example, so it gets a short budget; the last, empty one (the actual
+        # question) gets the full timeout. Fuzz seed 62, case 175: the first preference ran 30 s to "unknown"
+        # while the unconstrained check took 1.3 s.
+        s.set("timeout", SOLVER_TIMEOUT_MS if i == len(preferences) - 1 else PREFERENCE_TIMEOUT_MS)
         s.push()
         s.add(*preference)
         result = s.check()
@@ -533,7 +543,7 @@ def _witness(enc: _Encoding, model: z3.ModelRef) -> Witness:
         elif key.kind == "ip":
             is_v4, address = ctx.ips[k]
             v4 = z3.is_true(model.eval(is_v4, model_completion=True))
-            context[key.name] = render_ipv4(value(address)) if v4 else IPV6_WITNESS
+            context[key.name] = render_ip(v4, value(address))
         else:
             context[key.name] = render_time(value(ctx.times[slot]), TIME_KEYS[k][1])
     action = text(enc.action)
@@ -778,6 +788,7 @@ def decide(
 
     if result.witness is not None:
         _self_check(principal, query, env, result)
+        _tidy(principal, query, env, result)
 
     if principal.unresolved and result.verdict is not Verdict.UNKNOWN:
         result.reasons.append(
@@ -806,3 +817,50 @@ def _self_check(principal: Principal, query: Query, env: Environment, result: Re
             f"witness {w.action} on {w.resource!r} with context {w.context} was {result.verdict.value} by the solver "
             f"but evaluates to {concrete} in the reference evaluator; please report this as a Reach bug"
         )
+
+
+_REGION = re.compile(r"[a-z]{2}(-gov|-iso[a-z]*)?-[a-z]+-[0-9]")
+_ACCOUNT = re.compile(r"[0-9]{12}")
+_SERVICE = re.compile(r"[a-z0-9-]+")
+_UNNAMED = re.compile(r"[^A-Za-z0-9/._:*-]+")
+
+
+def _tidy(principal: Principal, query: Query, env: Environment, result: Result) -> None:
+    """Make a checked witness's ARN read like one a person would write.
+
+    Z3 fills a resource name it does not care about with the shortest string it finds, often " ", which gives
+    witnesses like 'arn:aws:secretsmanager: : :secret: '. Asking the solver for realistic names instead made
+    whole audits many times slower, so names are tidied here: each rewrite (the action's service, a real
+    region, the principal's account, "example" for unnamed parts) is kept only if the reference evaluator
+    still gives the same answer, so the witness stays exactly as checked.
+    """
+    from .reference import evaluate  # noqa: PLC0415 - deferred: reference.py imports this module
+
+    w = result.witness
+    assert w is not None
+    parts = w.resource.split(":", 5)
+    if len(parts) < 6:
+        return
+    context = {**query.context, **w.context}
+
+    def answer(resource: str) -> object:
+        return evaluate(principal, w.action, resource, context, env, query.resource_policy)
+
+    target = answer(w.resource)
+    edits: list[tuple[int, str]] = []
+    if not _SERVICE.fullmatch(parts[2]) and ":" in w.action:
+        edits.append((2, w.action.split(":", 1)[0].lower()))
+    if parts[3] and not _REGION.fullmatch(parts[3]):
+        edits.append((3, WITNESS_REGION))
+    if parts[4] and not _ACCOUNT.fullmatch(parts[4]):
+        edits.append((4, principal.account or WITNESS_ACCOUNT))
+    rest = _UNNAMED.sub("example", parts[5])
+    if rest.endswith(("/", "-", ":", "_", ".")):
+        rest += "example"  # 'secret:app/search/' matched 'app/search/*' with nothing after the slash
+    if rest != parts[5]:
+        edits.append((5, rest))
+    for index, value in edits:
+        candidate = [*parts[:index], value, *parts[index + 1 :]]
+        if answer(":".join(candidate)) == target:
+            parts = candidate
+    result.witness = replace(w, resource=":".join(parts))

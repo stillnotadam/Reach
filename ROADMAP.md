@@ -27,7 +27,8 @@ Reach is built in phases. Each one ships something usable on its own.
 - [ ] Free ARN-valued condition keys (e.g. `aws:SourceArn`) still use the slower single-string encoding
 - [x] Numeric, Date and IpAddress operators (Z3 integer and bit-vector theories), one presence flag per key across sorts
 - [x] UNKNOWN verdicts list only the assumptions the witness actually depends on
-- [ ] IPv6 networks, decimal numbers, `StringEqualsIgnoreCase`
+- [x] IPv6 networks and `StringEqualsIgnoreCase`, both measured against AWS (findings 7 and 8)
+- [ ] Decimal and signed numbers, `Binary*`
 - [x] `ForAnyValue` / `ForAllValues` over multi-valued keys: bounded sets with a small-model bound, 207 `ArrayOf…` keys from AWS's reference data
 - [x] Policy variables (`${aws:username}`, `${aws:PrincipalTag/…}`, defaults, `${*}`), symbolic when the request decides them
 - [x] Resource-based policies: principal matching, same-account grant paths, required policies (trust, KMS), cross-account

@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `reach audit --html FILE`: a self-contained HTML report. Every ALLOWED cell shows its witness request, the
+  statements that allow it (found by the reference evaluator), and a `reach can` command that reproduces it.
+- IPv6: IP keys are 128-bit, so IPv6 networks and sources are decided exactly. Mixed families, IPv4-mapped sources
+  and malformed networks follow AWS as measured with `validation/ip_probe.py` (finding 7: 460 cases, 0
+  disagreements). A malformed network is now decided exactly when the key is absent.
+- `StringEqualsIgnoreCase` and `StringNotEqualsIgnoreCase`, also under `ForAnyValue`/`ForAllValues`: equal full
+  Unicode lowercase forms, as measured with `validation/case_probe.py` (finding 8).
+
+### Fixed
+
+- Witness ARNs could have empty or blank names (`arn:aws:s3:::accesspoint//object/`, `arn:aws:kms: : :key/ `). ARN
+  placeholders from the action catalogue now match one character or more, the plainest resource type is tried
+  first, and witnesses are tidied to a real region, the principal's account and `example` names, each rewrite kept
+  only if the reference evaluator gives the same answer.
+- Witness preferences (printable strings, an ARN shape) could use the full 30 s solver budget before the real
+  check ran: one fuzz case took 68 s. Each preference now gets 2 s; the test suite runs in about a sixth of the time.
+
 ## 0.2.0 (2026-10-11)
 
 ### Fixed
