@@ -101,14 +101,12 @@ def test_session_arn_grant_is_not_capped():
     assert can(role, rp(grant({"AWS": session}))) is Verdict.ALLOWED
 
 
-def test_same_account_account_grant_is_unsettled():
-    # AWS's simulator allows this without identity permissions; delegation is documented for
-    # KMS and cross-account. Until a live test settles it, Reach reports UNKNOWN, never a proof.
-    r = decide(Principal(USER, []), Query("s3:GetObject", f"{BUCKET}/a", resource_policy=rp(grant({"AWS": ACCT}))),
-               catalog=None)  # fmt: skip
-    assert r.verdict is Verdict.UNKNOWN
-    assert any("simulator" in a for a in r.assumptions)
-    # With identity permissions it is allowed either way.
+def test_account_grant_only_delegates():
+    # Verified on live S3 (validation/live_account_grant.py): a user with no identity policy cannot
+    # read through a same-account bucket policy that names the account. AWS's policy simulator
+    # wrongly says it can (FINDINGS.md, finding 4).
+    assert can(Principal(USER, []), rp(grant({"AWS": ACCT}))) is Verdict.DENIED
+    assert can(Principal(USER, []), rp(grant({"AWS": f"arn:aws:iam::{ACCT}:root"}))) is Verdict.DENIED
     assert can(Principal(USER, [ALLOW_S3]), rp(grant({"AWS": ACCT}))) is Verdict.ALLOWED
 
 

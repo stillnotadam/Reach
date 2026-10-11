@@ -252,6 +252,5 @@ def _resource_grant(principal: Principal, req: Request, rp: ResourcePolicy, iden
     direct = _or([granted[Match.USER], granted[Match.SESSION], _and([granted[Match.ROLE], capped]), wildcard])
     if rp.required:
         return _or([direct, _and([granted[Match.ACCOUNT], identity_path])])
-    # Unsettled AWS rule: whether a same-account account-principal grant suffices alone.
-    account = _and([granted[Match.ACCOUNT], None]) if by_kind[Match.ACCOUNT] else False
-    return _or([identity_path, direct, account])
+    # An account grant only delegates (verified on live S3; FINDINGS.md, finding 4).
+    return _or([identity_path, direct])

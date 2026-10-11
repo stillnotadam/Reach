@@ -37,6 +37,7 @@ from typing import Any, Protocol
 
 from reach.engine import Environment, Query, Verdict, decide
 from reach.policy import Policy, Statement
+from reach.principals import Match, classify
 from reach.values import IP_KEYS, TIME_KEYS, parse_int, principal_type
 
 from .fuzz import ACTIONS, RESOURCES, Case, random_case, random_context
@@ -125,6 +126,12 @@ def simulatable(case: Case) -> tuple[Case | None, str]:
     if rp is not None and any(r.count(":") < 5 for st in rp.policy.statements for r in st.resources):
         # The simulator rejects it, and real bucket/key policies must name ARNs anyway.
         return None, "resource policy with a non-ARN Resource"
+    if rp is not None and any(
+        st.effect == "Allow" and Match.ACCOUNT in classify(st, case.principal.arn) for st in rp.policy.statements
+    ):
+        # The simulator treats a same-account account-principal grant as sufficient on its own;
+        # live S3 does not (FINDINGS.md, finding 4). Comparing would only re-measure that bug.
+        return None, "account-principal grant (simulator differs from live AWS)"
     # SCPs and session policies are not simulator inputs: compare without them.
     return Case(case.principal, Environment(), rp), ""
 

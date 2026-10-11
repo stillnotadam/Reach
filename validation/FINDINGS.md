@@ -38,22 +38,34 @@ Reach bug that is now fixed and covered by a test, a documented limitation, or a
   placeholders (`${TagKey}`, `<key>`) match by prefix, so the data can only widen the model. Test:
   `test_service_key_only_on_supporting_actions`.
 
-## Unsettled AWS rules (Reach reports UNKNOWN)
+## AWS's policy simulator vs live AWS
 
-### 4. Same-account grants to the account principal
+### 4. Same-account grants to the account principal: the simulator is wrong
 
-- **Found:** seed 2. All 7 disagreements in 1,157 compared cases. Reach said DENIED, AWS said allowed.
+- **Found:** seed 2. All 7 disagreements in 1,157 compared cases. Reach said DENIED, the simulator said allowed.
 - **What happened:** in every case the only grant was a same-account resource policy naming the *account*
-  (`"123456789012"` or `arn:aws:iam::123456789012:root`), and no identity policy allowed the action. Reach followed the
-  delegation rule ("an account grant needs identity permissions too"). The simulator allowed all 7.
-- **Why it is unsettled:** delegation is documented for KMS key policies and for cross-account access. For a
-  same-account bucket policy, the simulator says the account grant suffices alone. The simulator is AWS's own
-  evaluator, but it is known to differ from live services in places.
-- **What Reach does now:** a proof cannot rest on a rule AWS's own simulator contradicts, so these cases are `UNKNOWN`,
-  with the caveat named. Required policies (trust, KMS) keep delegation, and cross-account is unchanged. Test:
-  `test_same_account_account_grant_is_unsettled`.
-- **How to settle it:** a live test. Create one S3 bucket whose policy grants `s3:GetObject` to the account principal,
-  then read an object as an IAM user with no identity policy.
+  (`"123456789012"` or `arn:aws:iam::123456789012:root`), with no identity policy allowing the action. Reach applied
+  delegation: an account grant needs identity permissions too.
+- **Live test** (`validation/live_account_grant.py`): one real S3 bucket, read by an IAM user with no permissions of its
+  own. The bucket was deleted afterwards.
+
+  | Case | Bucket policy | Live S3 |
+  |------|---------------|---------|
+  | A (control) | none | denied |
+  | **B** | grants `s3:GetObject` to `arn:aws:iam::ACCOUNT:root` | **denied** |
+  | C (control) | grants `s3:GetObject` to the user's ARN | allowed |
+
+  Both controls behaved as expected, and two independent runs gave identical results. S3's denial reason for B: *"no identity-based policy allows the s3:GetObject
+  action"*.
+- **Conclusion:** on live S3 an account-principal grant only delegates, as Reach modelled it. **AWS's own IAM policy
+  simulator gets this wrong.** Reach keeps the delegation rule, and the simulator harness skips these cases with a
+  named reason instead of counting a known simulator error as agreement or disagreement. Test:
+  `test_account_grant_only_delegates`.
+- **Scope:** verified live for S3. Other services' resource policies follow the same documented IAM rule, but have not
+  been tested live.
+- **Lesson for the methodology:** the first live run's controls failed too. The test sampled for only ~12 seconds, and
+  the bucket policy was not live yet. It now waits 60 seconds after every policy change. A test whose controls fail
+  says nothing about the case under study.
 
 ## Simulator quirks (not Reach bugs)
 
@@ -73,5 +85,6 @@ Reach bug that is now fixed and covered by a test, a documented limitation, or a
 |------|-------|----------|---------------|-------|
 | 1 | 500 | 281 | 0 | after finding 1 was fixed |
 | 2 | 2000 | 1157 | 7 | all finding 4 (account-principal grants) |
-| 2 | 2000 | 1150 | 0 | after finding 4: 49 cases UNKNOWN in Reach (AWS: 21 allowed, 28 denied) |
+| 2 | 2000 | 1150 | 0 | interim: account-principal grants reported UNKNOWN (AWS: 21 allowed, 28 denied) |
 | 3 | 1000 | 567 | 0 | with the bundled reference data; 18 UNKNOWN (AWS: 6 allowed, 12 denied) |
+| 2 | 2000 | 1104 | 0 | delegation restored after the live test; 78 account-principal cases skipped (finding 4) |

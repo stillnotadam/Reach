@@ -19,11 +19,10 @@ The grant paths depend on the resource-based policy, if the resource has one:
 * none: the identity path.
 * same account: the identity path, or a resource-policy grant that names
   the principal directly (user ARN, session ARN: unlimited; role ARN:
-  still capped by boundary and session policy). Whether a grant to the
-  account principal also suffices on its own is unsettled: AWS's policy
-  simulator says yes, while delegation is documented for KMS and
-  cross-account access. Until a live test settles it, such a grant gives
-  UNKNOWN rather than a verdict either way.
+  still capped by boundary and session policy). A grant to the account
+  principal only delegates, so it adds nothing beyond the identity path.
+  Verified on live S3 (validation/live_account_grant.py), where AWS's own
+  policy simulator gets it wrong (validation/FINDINGS.md, finding 4).
 * same account, policy required (role trust policies, KMS key policies):
   a direct grant, or an account grant together with the identity path.
 * cross-account: the identity path and a resource-policy grant.
@@ -61,10 +60,6 @@ from .values import IPV6_WITNESS, TIME_KEYS, principal_type, render_ipv4, render
 
 SOLVER_TIMEOUT_MS = 30_000
 RECENT_EPOCH = 1_577_836_800  # 2020-01-01: witnesses prefer plausible clock values
-ACCOUNT_GRANT_REASON = (
-    "a same-account grant to the account principal allows without identity permissions (AWS's "
-    "policy simulator says so; not yet confirmed on a live service)"
-)
 
 
 class InconsistencyError(RuntimeError):
@@ -255,10 +250,8 @@ class _Encoding:
         direct = z3.Or(anyof(Match.USER), anyof(Match.SESSION), z3.And(anyof(Match.ROLE), capped), wildcard)
         if rp.required:
             return z3.Or(direct, z3.And(anyof(Match.ACCOUNT), self.identity_path))
-        if not by_kind[Match.ACCOUNT]:
-            return z3.Or(self.identity_path, direct)
-        unsettled = self.ctx.assumption("Allow", ACCOUNT_GRANT_REASON, rp.policy.name)
-        return z3.Or(self.identity_path, direct, z3.And(anyof(Match.ACCOUNT), unsettled))
+        # An account grant only delegates: it adds nothing beyond the identity path.
+        return z3.Or(self.identity_path, direct)
 
     def _key_support(self) -> list[z3.BoolRef]:
         """Service-specific keys exist only on actions that support them (FINDINGS.md, finding 3)."""
