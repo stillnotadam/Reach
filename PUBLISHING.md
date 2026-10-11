@@ -9,27 +9,42 @@ The name `reach-security` was free on PyPI when 0.1.0 was prepared.
   tests, no validation code and no examples.
 - The wheel was installed into a fresh, empty virtual environment. There, `reach --version`, `reach can` and
   `reach agents` all ran against `examples/reach-goat`.
+- `.github/workflows/release.yml` builds, checks and publishes on a pushed `v*` tag through PyPI Trusted Publishing.
+  It refuses to run if the tag does not match the version in `pyproject.toml`.
 
-## What you do
+## What you do (once)
 
-Uploading needs your own PyPI credentials, so this part is yours.
+Trusted Publishing lets GitHub Actions publish through OIDC. No PyPI token exists anywhere, so none can leak.
 
-1. Create an account at pypi.org, turn on 2FA, and create an API token scoped to *Entire account*. Re-scope it to the
-   project after the first upload.
-2. Build fresh and upload:
+1. Create an account at pypi.org and turn on 2FA.
+2. Go to pypi.org → Your account → Publishing → **Add a new pending publisher**, and enter:
+
+   | Field | Value |
+   |-------|-------|
+   | PyPI project name | `reach-security` |
+   | Owner | `ctrl-adam` |
+   | Repository name | `Reach` |
+   | Workflow name | `release.yml` |
+   | Environment name | `pypi` |
+
+3. On GitHub, go to the repository → Settings → Environments → **New environment** named `pypi`. Optionally add
+   yourself as a required reviewer, so every release waits for your click.
+
+## Each release
+
+1. Set the version in `pyproject.toml` and the CHANGELOG heading, and commit.
+2. Tag and push:
 
    ```bash
-   python -m build
-   python -m twine upload dist/*
+   git tag v0.1.0
+   git push origin v0.1.0
    ```
 
-   Twine asks for credentials. Use `__token__` as the username and the token as the password. Type it there, never in a
-   chat or a file in this repository.
-3. Check it: `pip install reach-security` in a new virtual environment, then `reach --version`.
+3. Watch the Release workflow in the Actions tab. When it is green, check it: `pip install reach-security` in a new
+   virtual environment, then `reach --version`.
 
-### Later: publish from CI without stored tokens
+## Fallback: upload by hand
 
-PyPI Trusted Publishing lets a GitHub Actions workflow publish through OIDC, with no token stored anywhere. Configure it
-on pypi.org (project → Publishing → add a trusted publisher for `ctrl-adam/Reach` and a `release.yml` workflow). Reach's
-own trifecta analysis will then flag that workflow's `id-token: write`, which is expected for a release job that only
-runs on tags you push.
+If you ever need to publish without CI, create an API token on PyPI, then run `python -m build` and
+`python -m twine upload dist/*`. Use `__token__` as the username and type the token only into twine's prompt, never in a
+chat or a file in this repository.
