@@ -452,3 +452,24 @@ def test_principal_type_is_pinned():
     assert can(p, "s3:GetObject", "*").verdict is Verdict.ALLOWED  # ARN is a role
     user = Principal("arn:aws:iam::123456789012:user/alice", p)
     assert decide(user, Query("s3:GetObject", "*"), catalog=None).verdict is Verdict.DENIED
+
+
+# --- Bool reads both sides as booleans (FINDINGS.md, finding 6) ---------------------
+
+
+def test_bool_reads_any_case_true_and_treats_everything_else_as_false():
+    mfa_off = [pol(allow("s3:GetObject", Condition={"Bool": {"aws:MultiFactorAuthPresent": "false"}}))]
+    for value, verdict in (("other", Verdict.ALLOWED), ("", Verdict.ALLOWED), ("TRUE", Verdict.DENIED)):
+        r = can(mfa_off, "s3:GetObject", f"{BUCKET}/x", context={"aws:MultiFactorAuthPresent": value})
+        assert r.verdict is verdict, value
+    odd_policy_value = [pol(allow("s3:GetObject", Condition={"Bool": {"aws:SecureTransport": "yes"}}))]
+    r = can(odd_policy_value, "s3:GetObject", f"{BUCKET}/x", context={"aws:SecureTransport": "false"})
+    assert r.verdict is Verdict.ALLOWED  # "yes" is not "true", so it reads as false
+
+
+def test_bool_on_a_non_boolean_key_does_not_shrink_its_values():
+    # Used to restrict s3:prefix to "true"/"false" everywhere, so this was a false DENIED proof.
+    stmt = allow("s3:ListBucket", BUCKET,
+                 Condition={"Bool": {"s3:prefix": "false"}, "StringLike": {"s3:prefix": "home/*"}})  # fmt: skip
+    r = can([pol(stmt)], "s3:ListBucket", BUCKET)
+    assert r.verdict is Verdict.ALLOWED and r.witness.context["s3:prefix"].startswith("home/")

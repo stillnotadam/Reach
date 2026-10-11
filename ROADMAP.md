@@ -19,16 +19,16 @@ Reach is built in phases. Each one ships something usable on its own.
 - [x] Simulator harness written (`validation/aws_simulator.py`), tested against a fake client
 - [x] **First real runs** against the IAM policy simulator: 1 Reach bug fixed (`aws:RequestedRegion` and other always-present keys), 2 modelling gaps recorded ([FINDINGS](validation/FINDINGS.md))
 - [x] Live test on real S3: same-account account-principal grants only delegate; AWS's simulator is wrong (finding 4)
+- [x] `Bool` value handling, verified against the simulator (finding 6)
 - [ ] Keep running the harness on new seeds and after every semantic change. Still to verify:
   - segment-wise wildcard matching in the `Resource` element (documented for `ArnLike`; to confirm for `Resource`)
-  - `Bool` value case handling
 - [x] Bundled Service Authorization Reference: per-action resource types and condition keys (simulator findings 2 and 3)
 - [x] Action classes: one concrete solver problem per group of actions policies treat alike (`*` over 22,080 actions: ~0.1 s allowed, ~4 s full DENIED proof)
 - [ ] Free ARN-valued condition keys (e.g. `aws:SourceArn`) still use the slower single-string encoding
 - [x] Numeric, Date and IpAddress operators (Z3 integer and bit-vector theories), one presence flag per key across sorts
 - [x] UNKNOWN verdicts list only the assumptions the witness actually depends on
 - [ ] IPv6 networks, decimal numbers, `StringEqualsIgnoreCase`
-- [ ] `ForAnyValue` / `ForAllValues` over multi-valued keys (bounded sequences)
+- [x] `ForAnyValue` / `ForAllValues` over multi-valued keys: bounded sets with a small-model bound, 207 `ArrayOf…` keys from AWS's reference data
 - [x] Policy variables (`${aws:username}`, `${aws:PrincipalTag/…}`, defaults, `${*}`), symbolic when the request decides them
 - [x] Resource-based policies: principal matching, same-account grant paths, required policies (trust, KMS), cross-account
 - [x] Trust policies loaded from `get-account-authorization-details` for `sts:AssumeRole` queries

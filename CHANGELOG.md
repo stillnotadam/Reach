@@ -6,11 +6,16 @@
 
 - Policy variables in `Resource` elements were read as literal text, so Reach could prove DENIED a request AWS allows
   (`validation/FINDINGS.md`, finding 5).
+- `Bool` compared lowercase strings and restricted any key under it to `true`/`false`, which could prove DENIED a
+  request AWS allows. It now reads both sides as booleans, as measured against AWS (finding 6).
 
 ### Added
 
 - Policy variables, exact: `${aws:username}`, principal tags, pinned keys, `${key, 'default'}`, `${*}`/`${?}`/`${$}`,
   and symbolic substitution for values the request decides. Only under `Version: 2012-10-17`, as in AWS.
+- `ForAnyValue`/`ForAllValues` over multi-valued and single-valued keys, with a bound on set sizes that keeps DENIED
+  a proof. The catalogue now records the 207 keys AWS types as `ArrayOf…`. `--context 'aws:TagKeys=["a","b"]'` pins a
+  set.
 - `reach agents --sarif FILE` (SARIF 2.1.0 for GitHub code scanning) and `--fail-on critical|high`.
 - A GitHub Action (`uses: ctrl-adam/Reach@v0.2.0`) that runs Reach and uploads the report to code scanning.
 

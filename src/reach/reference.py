@@ -27,11 +27,21 @@ import re
 from collections.abc import Iterable
 from functools import lru_cache
 
-from .conditions import MULTIVALUED_KEYS
+from .conditions import ContextValue, is_multivalued
 from .engine import Environment, Principal, ResourcePolicy
 from .policy import Condition, Policy, Statement
 from .principals import Match, classify
-from .values import IP_KEYS, TIME_KEYS, parse_int, parse_ip, parse_ipv4_network, parse_time, principal_type, username
+from .values import (
+    IP_KEYS,
+    TIME_KEYS,
+    parse_bool,
+    parse_int,
+    parse_ip,
+    parse_ipv4_network,
+    parse_time,
+    principal_type,
+    username,
+)
 from .variables import literal, resolve_statement
 
 Tri = bool | None  # True, False, or None for "depends on something unmodelled"
@@ -82,11 +92,11 @@ def _arn(pattern: str) -> re.Pattern[str]:
 
 
 class Request:
-    def __init__(self, action: str, resource: str, context: dict[str, str | None]):
+    def __init__(self, action: str, resource: str, context: dict[str, ContextValue]):
         self.action = action
         self.resource = resource
-        # Absent keys are simply missing; a None value also means absent.
-        self.context = {k.lower(): v for k, v in context.items() if v is not None}
+        # Absent keys are simply missing; None, or an empty set of values, also means absent.
+        self.context = {k.lower(): v for k, v in context.items() if v is not None and v != []}
 
 
 _COMPARE = {
@@ -132,7 +142,7 @@ def _hit(base: str, value: str, values: tuple[str, ...]) -> Tri:
     if base in ("StringLike", "StringNotLike"):
         return any(_glob(v).fullmatch(value) for v in values)
     if base == "Bool":
-        return value in {v.lower() for v in values}
+        return parse_bool(value) in {parse_bool(v) for v in values}
     if base in _STRINGISH:
         return any(_arn(v).fullmatch(value) for v in values)
     fam = _family(base)
@@ -152,23 +162,44 @@ def _hit(base: str, value: str, values: tuple[str, ...]) -> Tri:
     return is_v4 and any((number & mask) == net for net, mask in networks)
 
 
+def _set_condition(cond: Condition, req: Request, base: str, if_exists: bool) -> Tri:
+    """ForAnyValue / ForAllValues: the operator applied to each request value; an absent key is the empty set."""
+    qualifier, inner = base.split(":", 1)
+    k = cond.key.lower()
+    kind = "ip" if k in IP_KEYS else "time" if k in TIME_KEYS else "string"
+    if qualifier not in ("ForAnyValue", "ForAllValues") or if_exists or inner == "Bool" or inner not in _STRINGISH:
+        return None
+    if kind != "string":
+        return None
+    raw = req.context.get(k)
+    elements = [] if raw is None else [raw] if isinstance(raw, str) else list(raw)
+    hits: list[Tri] = []
+    for e in elements:
+        hit = _hit(inner, e, cond.values)
+        hits.append(_not(hit) if "Not" in inner else hit)
+    return _or(hits) if qualifier == "ForAnyValue" else _and(hits)
+
+
 def _condition(cond: Condition, req: Request, variables: bool) -> Tri:
     op = cond.operator
     if_exists = op.endswith("IfExists")
     base = op[: -len("IfExists")] if if_exists else op
-    unresolved = variables and any("${" in v for v in cond.values)
-    if ":" in base or unresolved or cond.key.lower() in MULTIVALUED_KEYS or not cond.values:
+    if (variables and any("${" in v for v in cond.values)) or not cond.values:
         return None
+    if ":" in base:
+        return _set_condition(cond, req, base, if_exists)
 
     k = cond.key.lower()
     kind = "ip" if k in IP_KEYS else "time" if k in TIME_KEYS else "string"
     value = req.context.get(k)
     if base == "Null":
         return any((value is None) == (v.lower() == "true") for v in cond.values)
-    if not _modelled(base, kind, cond.values):
+    if is_multivalued(k) or not _modelled(base, kind, cond.values):
         return None
     if value is None:
         return True if "Not" in base else if_exists
+    if not isinstance(value, str):
+        return None  # several values for a key this model treats as single-valued
     hit = _hit(base, value, cond.values)
     if hit is None:
         return None
@@ -204,7 +235,7 @@ def evaluate(
     principal: Principal,
     action: str,
     resource: str,
-    context: dict[str, str | None],
+    context: dict[str, ContextValue],
     env: Environment | None = None,
     resource_policy: ResourcePolicy | None = None,
 ) -> Tri:
@@ -214,7 +245,7 @@ def evaluate(
     """
     env = env or Environment()
     # Principal-derived keys first, so explicitly pinned keys override them, as in the engine.
-    full: dict[str, str | None] = {
+    full: dict[str, ContextValue] = {
         "aws:PrincipalArn": principal.arn,
         "aws:PrincipalAccount": principal.account,
         "aws:PrincipalType": principal_type(principal.arn),

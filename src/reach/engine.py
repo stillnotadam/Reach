@@ -52,7 +52,7 @@ from enum import Enum
 import z3
 
 from .catalog import Catalog, bundled, iam_glob_regex
-from .conditions import MULTIVALUED_KEYS, STRING_OPS, Context, encode_conditions, key_kind, wrap_presence
+from .conditions import STRING_OPS, Context, ContextValue, encode_conditions, is_multivalued, key_kind, wrap_presence
 from .patterns import PRINTABLE, ArnVar, glob, has_wildcard, matches_any, sval
 from .policy import Policy, Statement
 from .principals import Match, classify
@@ -116,7 +116,7 @@ class Query:
     action: str
     resource: str
     # Pinned context keys; None pins a key as absent from the request.
-    context: dict[str, str | None] = field(default_factory=dict)
+    context: dict[str, ContextValue] = field(default_factory=dict)
     resource_policy: ResourcePolicy | None = None
 
 
@@ -124,7 +124,7 @@ class Query:
 class Witness:
     action: str
     resource: str
-    context: dict[str, str | None]  # None = key absent from the request
+    context: dict[str, ContextValue]  # None = key absent from the request; a list for a multi-valued key
 
 
 @dataclass
@@ -144,13 +144,35 @@ class _Gate:
     expr: z3.BoolRef
 
 
+def set_bounds(principal: Principal, query: Query, env: Environment) -> dict[str, int]:
+    """How many elements a multi-valued key's set needs, per key: its set conditions, plus one.
+
+    Small-model argument: take any request that satisfies the constraints. Keep, for every set condition on
+    the key, one element witnessing it (a matching element if it is a true ForAnyValue, a failing one if it
+    is a false ForAllValues), plus one element if the set is non-empty. Every set condition keeps its truth
+    value on this subset: existential ones keep their witness, universal ones only lose elements. So if any
+    request satisfies the constraints, one with at most this many elements does, and a DENIED proof over
+    the bounded sets is a proof over all requests.
+    """
+    policies = [*principal.identity_policies, *env.session_policies, *(p for _, ps in env.scp_layers for p in ps)]
+    policies += [principal.boundary] if principal.boundary else []
+    policies += [query.resource_policy.policy] if query.resource_policy else []
+    counts: dict[str, int] = {}
+    for p in policies:
+        for st in p.statements:
+            for c in st.conditions:
+                if ":" in c.operator:
+                    counts[c.key.lower()] = counts.get(c.key.lower(), 0) + 1
+    return {k: n + 1 for k, n in counts.items()}
+
+
 class _Encoding:
     """All symbolic pieces of one query, built once and reused by every solver call."""
 
     def __init__(
         self, principal: Principal, query: Query, env: Environment, catalog: Catalog | None, action: str | None
     ):
-        fixed: dict[str, str | None] = {
+        fixed: dict[str, ContextValue] = {
             "aws:PrincipalArn": principal.arn,
             "aws:PrincipalAccount": principal.account,
             "aws:PrincipalType": principal_type(principal.arn),
@@ -158,7 +180,7 @@ class _Encoding:
         }
         fixed.update({f"aws:PrincipalTag/{k}": v for k, v in principal.tags.items()})
         fixed.update(query.context)
-        self.ctx = Context(fixed, closed_prefixes=("aws:PrincipalTag/",))
+        self.ctx = Context(fixed, closed_prefixes=("aws:PrincipalTag/",), set_bounds=set_bounds(principal, query, env))
         self.action = z3.String("action")
         self.arn = ArnVar("resource")
         self.resource = self.arn.full
@@ -262,13 +284,15 @@ class _Encoding:
         return [
             z3.Not(self.ctx.presence[k])
             for k, key in self.ctx.keys.items()
-            if not k.startswith("aws:") and key.kind == "string" and not self.catalog.supports_key(self.rep, key.name)
+            if not k.startswith("aws:")
+            and key.kind in ("string", "set")
+            and not self.catalog.supports_key(self.rep, key.name)
         ]
 
     def _lookup(self, key: str) -> str | None | object:
         """A policy variable's value: pinned or principal-derived, None if absent, FREE if the request decides it."""
-        if key in MULTIVALUED_KEYS:
-            return FREE  # multi-valued keys cannot be variables; leave the element undecided
+        if is_multivalued(key):
+            return FREE  # never reached: variables over multi-valued keys are left undecided before lookup
         if key in self.ctx.fixed:
             return self.ctx.fixed[key]
         if any(key.startswith(p) for p in self.ctx.closed_prefixes):
@@ -382,7 +406,8 @@ class _Encoding:
 
     def preferences(self) -> list[list[z3.BoolRef]]:
         """Witness niceties, strongest first. They only shape which example we show, never a verdict."""
-        strings = [self.action, *self.arn.segments, *self.ctx.strings.values()]
+        elements = [v for slots in self.ctx.sets.values() for _, v in slots]
+        strings = [self.action, *self.arn.segments, *self.ctx.strings.values(), *elements]
         printable = [z3.InRe(s, PRINTABLE) for s in strings]
         arn_shaped = [self.arn.segments[0] == sval("arn"), self.arn.segments[1] == sval("aws")]
         recent = [t >= RECENT_EPOCH for t in self.ctx.times.values()]
@@ -429,11 +454,14 @@ def _witness(enc: _Encoding, model: z3.ModelRef) -> Witness:
         return model.eval(e, model_completion=True).as_long()
 
     ctx = enc.ctx
-    context: dict[str, str | None] = {}
+    context: dict[str, ContextValue] = {}
     for k, key in ctx.keys.items():
         slot = TIME_KEYS[k][0] if key.kind == "time" else k
         if not z3.is_true(model.eval(ctx.presence[slot], model_completion=True)):
             context[key.name] = None
+        elif key.kind == "set":
+            members = [text(v) for a, v in ctx.sets[k] if z3.is_true(model.eval(a, model_completion=True))]
+            context[key.name] = sorted(set(members))
         elif key.kind == "string":
             context[key.name] = text(ctx.strings[k])
         elif key.kind == "ip":

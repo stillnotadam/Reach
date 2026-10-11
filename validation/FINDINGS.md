@@ -36,6 +36,23 @@ hand and then checked against AWS. Each one is either a Reach bug that is now fi
   Tests: `test_username_variable_scopes_a_user_to_their_own_prefix` and the other policy-variable tests in
   `tests/test_engine.py`.
 
+### 6. `Bool` reads both sides as booleans, for every key
+
+- **Found:** seed 23, case 194, the first run after set operators were added. Reach said DENIED, AWS said allowed:
+  `Bool: {"aws:MultiFactorAuthPresent": "false"}` against a request value of `other`.
+- **Probe:** 92 direct simulator calls, over `aws:MultiFactorAuthPresent`, `aws:SecureTransport`, `aws:SourceVpc` and
+  `s3:prefix`, with string- and boolean-typed context entries. The rule is uniform: a value is true exactly when it is
+  `true` in any letter case; anything else (`other`, `1`, the empty string) is false; then the two booleans are
+  compared. A policy value of `yes` is false. A first probe on `s3:prefix` with `s3:GetObject` denied everything,
+  because that action does not support the key (finding 3); with `s3:ListBucket` it follows the same rule.
+- **Cause:** Reach compared lowercase strings, and it restricted any key used under `Bool` to exactly `true` or
+  `false` everywhere in the query. For a non-boolean key that restriction is wrong: an Allow with
+  `Bool: {"s3:prefix": "false"}` and `StringLike: {"s3:prefix": "home/*"}` was proved DENIED, but AWS allows
+  `s3:prefix = home/x`.
+- **Fix:** both evaluators read both sides as booleans (`parse_bool`); only the real boolean global keys keep the
+  `true`/`false` domain. Tests: `test_bool_reads_any_case_true_and_treats_everything_else_as_false`,
+  `test_bool_on_a_non_boolean_key_does_not_shrink_its_values` (both fail on the previous release).
+
 ## Modelling gaps (fixed with AWS's Service Authorization Reference)
 
 ### 2. Actions apply only to their own resource types
@@ -107,3 +124,5 @@ hand and then checked against AWS. Each one is either a Reach bug that is now fi
 | 3 | 1000 | 567 | 0 | with the bundled reference data; 18 UNKNOWN (AWS: 6 allowed, 12 denied) |
 | 2 | 2000 | 1104 | 0 | delegation restored after the live test; 78 account-principal cases skipped (finding 4) |
 | 11, 12, 13 | 400 each | 652 | 0 | policy variables (finding 5): 378 compared cases use them |
+| 21, 22, 23 | 400 each | 682 | 1, then 0 | set operators (268 cases): finding 6, then 0 after the fix |
+| 24 | 2000 | 1089 | 0 | 394 cases with set operators, 630 with policy variables |

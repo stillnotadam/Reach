@@ -43,6 +43,19 @@ def principal_type(arn: str) -> str:
     return "User" if ":user/" in arn else "AssumedRole"
 
 
+# Global keys whose value is always "true" or "false" in a real request.
+BOOLEAN_KEYS = frozenset({"aws:multifactorauthpresent", "aws:securetransport", "aws:viaawsservice",
+                          "aws:principalisawsservice"})  # fmt: skip
+
+
+def parse_bool(text: str) -> bool:
+    """How the Bool operator reads a value, on either side: "true" in any case is true, anything else false.
+
+    Measured against AWS's policy simulator (validation/FINDINGS.md, finding 6), for boolean and other keys alike.
+    """
+    return text.lower() == "true"
+
+
 def username(arn: str) -> str | None:
     """aws:username: an IAM user's name; not present for role sessions (IAM User Guide, policy variables)."""
     return arn.rsplit("/", 1)[-1] if ":user/" in arn else None

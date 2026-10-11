@@ -16,6 +16,7 @@ from . import __version__
 from .agents import Inventory, discover
 from .blast import Capability, Resolution, capabilities, resolve_profiles
 from .catalog import Catalog, bundled
+from .conditions import ContextValue
 from .engine import Environment, Principal, Query, ResourcePolicy, Result, Verdict, decide
 from .loaders import AuthorizationDetails, trust_policy
 from .policy import PolicyError, load_policy_file
@@ -28,13 +29,23 @@ _COLOURS = {Verdict.ALLOWED: "\033[1;31m", Verdict.DENIED: "\033[1;32m", Verdict
 _RESET = "\033[0m"
 
 
-def _parse_context(items: list[str], absent: list[str]) -> dict[str, str | None]:
-    out: dict[str, str | None] = {}
+def _parse_context(items: list[str], absent: list[str]) -> dict[str, ContextValue]:
+    """KEY=VALUE pins a value; KEY=["a","b"] (a JSON list) pins the values of a multi-valued key."""
+    out: dict[str, ContextValue] = {}
     for item in items:
         key, sep, value = item.partition("=")
         if not sep:
             raise SystemExit(f"--context expects KEY=VALUE, got {item!r}")
-        out[key] = value
+        if value.startswith("["):
+            try:
+                values = json.loads(value)
+            except json.JSONDecodeError as exc:
+                raise SystemExit(f"--context {key}: not a JSON list of strings: {exc}") from exc
+            if not isinstance(values, list) or not all(isinstance(v, str) for v in values):
+                raise SystemExit(f"--context {key}: expected a JSON list of strings")
+            out[key] = values
+        else:
+            out[key] = value
     for key in absent:
         out[key] = None
     return out

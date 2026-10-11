@@ -28,6 +28,7 @@ import sys
 from dataclasses import dataclass
 
 from reach.catalog import Catalog
+from reach.conditions import ContextValue
 from reach.engine import Environment, Principal, Query, ResourcePolicy, Verdict, decide
 from reach.policy import Policy, parse_policy
 from reach.reference import Tri, _arn, _glob, evaluate
@@ -125,14 +126,29 @@ class Case:
     resource_policy: ResourcePolicy | None = None
 
 
+TAG_KEYS = ["env", "team", "cost", "aws:stack"]
+SET_OPS = ["StringEquals", "StringLike", "StringNotEquals", "StringNotLike"]
+
+
+def _set_condition(rng: random.Random) -> tuple[str, str, list[str]]:
+    """ForAnyValue/ForAllValues, mostly on the multi-valued aws:TagKeys, sometimes on a single-valued key."""
+    qualifier = rng.choice(["ForAnyValue", "ForAllValues"])
+    op = f"{qualifier}:{rng.choice(SET_OPS)}"
+    if rng.random() < 0.25:
+        return op, "s3:prefix", rng.sample(KEYS["s3:prefix"] + ["home/*"], k=rng.randint(1, 2))
+    return op, "aws:TagKeys", rng.sample([*TAG_KEYS, "aws:*", "*"], k=rng.randint(1, 3))
+
+
 def _condition(rng: random.Random) -> tuple[str, str, list[str]]:
+    if rng.random() < 0.15:
+        return _set_condition(rng)
     roll = rng.random()
     if_exists = "IfExists" if rng.random() < 0.25 else ""
     if roll < 0.10:
         op, key, value = rng.choice(UNMODELLED)
         return op, key, [value]
     if roll < 0.17:
-        keys = [*KEYS, "aws:SourceIp", "aws:CurrentTime", "aws:TokenIssueTime"]
+        keys = [*KEYS, "aws:SourceIp", "aws:CurrentTime", "aws:TokenIssueTime", "aws:TagKeys"]
         return "Null", rng.choice(keys), [rng.choice(["true", "false"])]
     if roll < 0.27:
         op = f"Numeric{rng.choice(COMPARISONS)}{if_exists}"
@@ -212,8 +228,8 @@ def random_case(rng: random.Random) -> Case:
     return Case(principal, env, _resource_policy(rng) if rng.random() < 0.5 else None)
 
 
-def random_context(rng: random.Random) -> dict[str, str | None]:
-    ctx: dict[str, str | None] = {}
+def random_context(rng: random.Random) -> dict[str, ContextValue]:
+    ctx: dict[str, ContextValue] = {}
     for key, values in KEYS.items():
         ctx[key] = None if rng.random() < 0.3 else rng.choice([*values, "other"])
     # Every real request goes to some region (found by the AWS simulator harness).
@@ -226,6 +242,8 @@ def random_context(rng: random.Random) -> dict[str, str | None]:
     # Policies may test aws:TokenIssueTime, so a concrete request must decide it too: a key left out of the
     # context is unknown to the engine but absent to the reference (seed 1, case 198 in CI).
     ctx["aws:TokenIssueTime"] = None if rng.random() < 0.5 else render_time(epoch - 3600, "iso")
+    # A multi-valued key: absent, or a set of tag keys.
+    ctx["aws:TagKeys"] = None if rng.random() < 0.3 else sorted(rng.sample([*TAG_KEYS, "other"], k=rng.randint(1, 3)))
     return ctx
 
 

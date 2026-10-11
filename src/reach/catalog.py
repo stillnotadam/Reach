@@ -68,6 +68,8 @@ class Catalog:
     action_resources: dict[str, tuple[str, ...]] = field(default_factory=dict, compare=False, repr=False)
     # action (lower case) -> condition-key globs it supports. Missing: unknown, so unconstrained.
     action_keys: dict[str, tuple[str, ...]] = field(default_factory=dict, compare=False, repr=False)
+    # Condition keys whose request value is a set (ArrayOfString, ArrayOfARN, ...), lower case.
+    multivalued_keys: frozenset[str] = field(default_factory=frozenset, compare=False, repr=False)
     _by_lower: dict[str, str] = field(default_factory=dict, compare=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -115,6 +117,7 @@ class Catalog:
             data.get("source", "unknown"),
             action_resources,
             action_keys,
+            frozenset(k.lower() for k in data.get("multivalued_keys", [])),
         )
 
 

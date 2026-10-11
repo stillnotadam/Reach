@@ -121,7 +121,12 @@ Alerts keep their identity when lines move, and no secret value is ever written 
 - `Action`/`NotAction`, `Resource`/`NotResource`, IAM wildcards. Actions match case-insensitively; resource ARNs match segment by segment.
 - Conditions: `String(Not)Equals`, `String(Not)Like`, `Arn(Not)Equals`, `Arn(Not)Like`, `Bool`, `Null`, `Numeric*`,
   `Date*`, `IpAddress`/`NotIpAddress`, and the `…IfExists` forms. Missing keys follow AWS semantics: positive operators
-  fail, negated ones pass.
+  fail, negated ones pass. `Bool` reads both sides as booleans, as measured against AWS (`TRUE` is true, `other` false).
+- `ForAnyValue`/`ForAllValues` with the String and ARN operators, over multi-valued keys (`aws:TagKeys` and the 207
+  keys AWS's reference data types as `ArrayOf…`) and over single-valued keys (a set of at most one value, which is why
+  `ForAllValues` on them passes when the key is absent). Each multi-valued key is a bounded set; the bound is one
+  element per set condition on that key plus one, which is enough for any satisfying request to have a satisfying
+  subset of that size, so DENIED stays a proof.
   - IP keys are 32-bit bitvectors, so CIDR matching is exact; time keys are epoch seconds, and `aws:CurrentTime` and
     `aws:EpochTime` share one clock, so a policy cannot be satisfied by two inconsistent times.
 - The principal's own context is pinned: `aws:PrincipalArn`, `aws:PrincipalAccount`, `aws:PrincipalTag/*`,
@@ -133,8 +138,9 @@ Alerts keep their identity when lines move, and no secret value is ever written 
 
 ## Not modelled yet
 
-These are always reported as `UNKNOWN` rather than guessed: `ForAnyValue`/`ForAllValues`; policy variables over IP,
-time or multi-valued keys or inside ARN operators; multi-valued keys; IPv6 networks; decimal or signed numbers; `StringEqualsIgnoreCase` and `Binary*`. RCPs are not part of the decision yet. Whether a `Principal: "*"` grant is
+These are always reported as `UNKNOWN` rather than guessed: set operators with numeric, date, IP or `Bool` operators,
+or with `IfExists`; multi-valued keys without a set operator; policy variables over IP, time or multi-valued keys or
+inside ARN operators; IPv6 networks; decimal or signed numbers; `StringEqualsIgnoreCase` and `Binary*`. RCPs are not part of the decision yet. Whether a `Principal: "*"` grant is
 capped by a permissions boundary or session policy is reported as `UNKNOWN` until verified against AWS. See the [roadmap](ROADMAP.md).
 
 ## How Reach checks itself

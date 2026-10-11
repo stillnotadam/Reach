@@ -35,14 +35,13 @@ from collections import Counter
 from dataclasses import asdict, dataclass
 from typing import Any, Protocol
 
+from reach.conditions import ContextValue
 from reach.engine import Environment, Query, Verdict, decide
 from reach.policy import Policy, Statement
 from reach.principals import Match, classify
-from reach.values import IP_KEYS, TIME_KEYS, parse_int, principal_type, username
+from reach.values import BOOLEAN_KEYS, IP_KEYS, TIME_KEYS, parse_int, principal_type, username
 
 from .fuzz import ACTIONS, RESOURCES, Case, random_case, random_context
-
-BOOLEAN_KEYS = frozenset({"aws:multifactorauthpresent", "aws:securetransport", "aws:viaawsservice"})
 
 
 class SimulatorClient(Protocol):
@@ -94,11 +93,14 @@ def policy_json(policy: Policy) -> str:
 # --- context entries --------------------------------------------------------------
 
 
-def context_entries(context: dict[str, str | None]) -> list[dict[str, Any]]:
-    """Present keys only: an absent key is simply not sent."""
+def context_entries(context: dict[str, ContextValue]) -> list[dict[str, Any]]:
+    """Present keys only: an absent key (or an empty set) is simply not sent."""
     entries = []
     for key, value in context.items():
-        if value is None:
+        if value is None or value == []:
+            continue
+        if isinstance(value, list):
+            entries.append({"ContextKeyName": key, "ContextKeyValues": value, "ContextKeyType": "stringList"})
             continue
         k = key.lower()
         if k in IP_KEYS:
@@ -209,9 +211,13 @@ def feasible_request(rng: random.Random) -> tuple[str, str, dict[str, str | None
     return action, resource, context
 
 
-def _uses_variables(case: Case) -> bool:
+def _policies(case: Case) -> list[Policy]:
     policies = [*case.principal.identity_policies, *([case.principal.boundary] if case.principal.boundary else [])]
-    policies += [case.resource_policy.policy] if case.resource_policy else []
+    return policies + ([case.resource_policy.policy] if case.resource_policy else [])
+
+
+def _uses_variables(case: Case) -> bool:
+    policies = _policies(case)
     return any(
         st.variables and any("${" in t for t in (*st.resources, *(v for c in st.conditions for v in c.values)))
         for p in policies
@@ -253,6 +259,8 @@ def run(client: SimulatorClient, cases: int, seed: int) -> tuple[list[Comparison
         stats["compared"] += 1
         if _uses_variables(case):
             stats["  of which use policy variables"] += 1
+        if any(":" in c.operator for p in _policies(case) for st in p.statements for c in st.conditions):
+            stats["  of which use ForAnyValue/ForAllValues"] += 1
         flagged = "missing context" in detail
         if flagged:
             stats["  of which simulator flagged absent keys"] += 1

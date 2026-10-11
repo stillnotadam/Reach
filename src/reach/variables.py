@@ -35,7 +35,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 
-from .conditions import MULTIVALUED_KEYS, is_negated
+from .conditions import is_multivalued, is_negated
 from .policy import Condition, Statement
 from .values import IP_KEYS, TIME_KEYS
 
@@ -76,7 +76,7 @@ def _as_data(value: str) -> str:
 
 
 def _undecidable(key: str) -> bool:
-    return key in MULTIVALUED_KEYS or key in IP_KEYS or key in TIME_KEYS
+    return is_multivalued(key) or key in IP_KEYS or key in TIME_KEYS
 
 
 def bind(text: str, lookup: Lookup) -> Pattern | None:

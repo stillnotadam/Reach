@@ -18,6 +18,7 @@ something we did not model (see engine.decide).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 
 import z3
 
@@ -26,9 +27,11 @@ from .policy import Condition, Statement
 from .values import (
     ALWAYS_PRESENT_KEYS,
     ALWAYS_PRESENT_TIME_GROUPS,
+    BOOLEAN_KEYS,
     IP_KEYS,
     MAX_EPOCH,
     TIME_KEYS,
+    parse_bool,
     parse_int,
     parse_ip,
     parse_ipv4_network,
@@ -71,12 +74,31 @@ def is_negated(base: str) -> bool:
     return "Not" in base
 
 
+@lru_cache(maxsize=1)
+def _catalogue_multivalued() -> frozenset[str]:
+    from .catalog import bundled  # noqa: PLC0415 - deferred: the catalogue is large and optional
+
+    catalog = bundled()
+    return catalog.multivalued_keys if catalog is not None else frozenset()
+
+
+def is_multivalued(key: str) -> bool:
+    """Is the key's request value a set? Global keys from the IAM docs, service keys from AWS's reference data."""
+    k = key.lower()
+    return k in MULTIVALUED_KEYS or k in _catalogue_multivalued()
+
+
 def key_kind(key: str) -> str:
     k = key.lower()
-    return "ip" if k in IP_KEYS else "time" if k in TIME_KEYS else "string"
+    if k in IP_KEYS:
+        return "ip"
+    if k in TIME_KEYS:
+        return "time"
+    return "set" if is_multivalued(k) else "string"
 
 
 _FREE = object()
+ContextValue = str | list[str] | None  # a list only for multi-valued keys; None = absent
 
 
 @dataclass
@@ -96,9 +118,17 @@ class FreeKey:
 class Context:
     """The symbolic request context shared by every policy in one query."""
 
-    def __init__(self, fixed: dict[str, str | None] | None = None, closed_prefixes: tuple[str, ...] = ()):
-        # fixed: key -> value, or None to pin the key as absent.
+    def __init__(
+        self,
+        fixed: dict[str, ContextValue] | None = None,
+        closed_prefixes: tuple[str, ...] = (),
+        set_bounds: dict[str, int] | None = None,
+    ):
+        # fixed: key -> value (a list for a multi-valued key), or None to pin the key as absent.
         self.fixed = {k.lower(): v for k, v in (fixed or {}).items()}
+        # Multi-valued keys: how many elements a request's set needs at most (see set_bound in engine.py).
+        self.set_bounds = {k.lower(): n for k, n in (set_bounds or {}).items()}
+        self.sets: dict[str, list[tuple[z3.BoolRef, z3.SeqRef]]] = {}  # key -> (active, value) slots
         # Keys under these prefixes are absent unless listed in `fixed`
         # (e.g. aws:principaltag/ once we know all of the principal's tags).
         self.closed_prefixes = tuple(p.lower() for p in closed_prefixes)
@@ -116,7 +146,12 @@ class Context:
     # --- fixed values ---------------------------------------------------------
 
     def _fixed(self, k: str):
-        """The pinned value of key k: a string, None for absent, or _FREE."""
+        """The pinned value of key k: a string (a list for a multi-valued key), None for absent, or _FREE."""
+        if isinstance(self.fixed.get(k), list) and key_kind(k) != "set":
+            values = self.fixed[k]
+            if not isinstance(values, list) or len(values) > 1:
+                raise ValueError(f"{k} is single-valued, but several values were given: {values!r}")
+            self.fixed[k] = values[0] if values else None
         if k in TIME_KEYS:
             group = TIME_KEYS[k][0]
             pinned = {kk: v for kk, v in self.fixed.items() if kk in TIME_KEYS and TIME_KEYS[kk][0] == group}
@@ -124,7 +159,7 @@ class Context:
                 return _FREE
             parsed = set()
             for kk, v in pinned.items():
-                epoch = None if v is None else parse_time(v)
+                epoch = None if v is None else parse_time(v) if isinstance(v, str) else None
                 if v is not None and epoch is None:
                     raise ValueError(f"cannot parse {kk} value {v!r} as a time")
                 parsed.add(epoch)
@@ -134,7 +169,7 @@ class Context:
             return None if epoch is None else str(epoch)
         if k in self.fixed:
             v = self.fixed[k]
-            if v is not None and k in IP_KEYS and parse_ip(v) is None:
+            if isinstance(v, str) and k in IP_KEYS and parse_ip(v) is None:
                 raise ValueError(f"cannot parse {k} value {v!r} as an IP address")
             return v
         if any(k.startswith(p) for p in self.closed_prefixes):
@@ -158,6 +193,12 @@ class Context:
             self.strings[k] = z3.String(f"value_{n}")
             if k in ALWAYS_PRESENT_KEYS:
                 self.domain.append(self.presence[slot])
+        elif kind == "set":
+            size = self.set_bounds.get(k, 1)
+            slots = [(z3.Bool(f"member_{n}_{i}"), z3.String(f"element_{n}_{i}")) for i in range(size)]
+            self.sets[k] = slots
+            # A set with no elements is the key being absent, as in AWS.
+            self.domain.append(self.presence[slot] == z3.Or([a for a, _ in slots]))
         elif kind == "ip":
             self.ips[k] = (z3.Bool(f"ipv4_{n}"), z3.BitVec(f"ip_{n}", 32))
         else:
@@ -171,8 +212,24 @@ class Context:
     def present(self, name: str) -> z3.BoolRef:
         v = self._fixed(name.lower())
         if v is not _FREE:
-            return z3.BoolVal(v is not None)
+            return z3.BoolVal(v is not None and v != [])
         return self.presence[self._ensure(name)]
+
+    def elements(self, name: str) -> list[tuple[z3.BoolRef, z3.SeqRef]]:
+        """The request's values for the key, as (is a member, value) pairs.
+
+        A single-valued key is a set of at most one element, sharing the key's own variable, which is how
+        AWS evaluates ForAllValues/ForAnyValue on it.
+        """
+        k = name.lower()
+        if key_kind(k) == "string":
+            return [(self.present(name), self.string(name))]
+        v = self._fixed(k)
+        if v is not _FREE:
+            values = [] if v is None else [v] if isinstance(v, str) else list(v)
+            return [(z3.BoolVal(True), sval(x)) for x in values]
+        self._ensure(name)
+        return self.sets[k]
 
     def string(self, name: str) -> z3.SeqRef:
         v = self._fixed(name.lower())
@@ -230,13 +287,18 @@ def _any(terms: list[z3.BoolRef]) -> z3.BoolRef:
     return z3.Or(terms) if len(terms) > 1 else terms[0]
 
 
+_TRUE_ANY_CASE = z3.Concat(*(z3.Union(z3.Re(c), z3.Re(c.upper())) for c in "true"))
+
+
 def _string_match(kind: str, value: z3.SeqRef, values: tuple[str, ...]) -> z3.BoolRef:
     terms = []
     for v in values:
         if kind == "eq":
             terms.append(value == sval(v))
         elif kind == "bool":
-            terms.append(value == sval(v.lower()))
+            # Both sides are read as booleans: "true" in any case, or anything else (finding 6).
+            is_true = z3.InRe(value, _TRUE_ANY_CASE)
+            terms.append(is_true if parse_bool(v) else z3.Not(is_true))
         elif kind == "like":
             terms.append(z3.InRe(value, glob(v)) if has_wildcard(v) else value == sval(v))
         else:  # arn
@@ -258,14 +320,14 @@ def encode_condition(cond: Condition, ctx: Context, stmt: Statement) -> z3.BoolR
     base = op[: -len("IfExists")] if if_exists else op
     kind = key_kind(cond.key)
 
-    if ":" in base:  # ForAnyValue: / ForAllValues: set operators
-        return ctx.opaque(stmt, f"set operator {op} on {cond.key}")
     if stmt.variables and any("${" in v for v in cond.values):
         return ctx.opaque(stmt, f"policy variable in {op} {cond.key}")
-    if cond.key.lower() in MULTIVALUED_KEYS:
-        return ctx.opaque(stmt, f"multi-valued key {cond.key}")
     if not cond.values:
         return ctx.opaque(stmt, f"empty value list for {op} {cond.key}")
+    if ":" in base:  # ForAnyValue: / ForAllValues: set operators
+        return _encode_set(cond, ctx, stmt, base, if_exists, kind)
+    if kind == "set" and base != "Null":
+        return ctx.opaque(stmt, f"multi-valued key {cond.key} without ForAnyValue/ForAllValues")
 
     # Each family is only modelled on keys of its own sort. Checking before
     # touching the context means keys that appear solely in opaque
@@ -276,7 +338,8 @@ def encode_condition(cond: Condition, ctx: Context, stmt: Statement) -> z3.BoolR
 
     if base in STRING_OPS and kind == "string":
         present, value = ctx.present(cond.key), ctx.string(cond.key)
-        if base == "Bool":
+        if base == "Bool" and cond.key.lower() in BOOLEAN_KEYS:
+            # Real requests carry only "true" or "false" for these keys; other keys keep their full range.
             ctx.restrict(cond.key, ("true", "false"))
         return wrap_presence(base, if_exists, present, _string_match(STRING_OPS[base], value, cond.values))
 
@@ -315,6 +378,27 @@ def encode_condition(cond: Condition, ctx: Context, stmt: Statement) -> z3.BoolR
         return wrap_presence(base, if_exists, present, matched)
 
     return ctx.opaque(stmt, f"operator {op} on {cond.key} is not modelled yet")
+
+
+def _encode_set(cond: Condition, ctx: Context, stmt: Statement, base: str, if_exists: bool, kind: str) -> z3.BoolRef:
+    """ForAnyValue / ForAllValues: the operator applies to each request value in turn.
+
+    ForAnyValue holds when some value matches (so never for an absent key); ForAllValues holds when every
+    value matches (so always for an absent key: the documented over-permissive case).
+    """
+    qualifier, inner = base.split(":", 1)
+    family = STRING_OPS.get(inner)
+    if qualifier not in ("ForAnyValue", "ForAllValues") or if_exists or family in (None, "bool"):
+        return ctx.opaque(stmt, f"set operator {cond.operator} on {cond.key}")
+    if kind not in ("string", "set"):
+        return ctx.opaque(stmt, f"set operator {cond.operator} on {cond.key}")
+    hits = []
+    for member, value in ctx.elements(cond.key):
+        matched = _string_match(family, value, cond.values)
+        hits.append((member, z3.Not(matched) if is_negated(inner) else matched))
+    if qualifier == "ForAnyValue":
+        return z3.Or([z3.And(m, h) for m, h in hits]) if hits else z3.BoolVal(False)
+    return z3.And([z3.Implies(m, h) for m, h in hits]) if hits else z3.BoolVal(True)
 
 
 def encode_conditions(stmt: Statement, ctx: Context) -> z3.BoolRef:

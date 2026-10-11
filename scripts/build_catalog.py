@@ -38,6 +38,10 @@ def service_actions(entry: dict[str, Any]) -> dict[str, Any]:
     prefix = doc.get("Name") or entry["service"]
     resources = {r["Name"]: r for r in doc.get("Resources", [])}
     out: dict[str, Any] = {"actions": [], "action_resources": {}, "action_keys": {}, "resource_formats": {}}
+    # Keys whose value is a set (ArrayOfString, ArrayOfARN, ...): conditions on them need ForAnyValue/ForAllValues.
+    out["multivalued_keys"] = [
+        k["Name"] for k in doc.get("ConditionKeys", []) if any(t.startswith("ArrayOf") for t in k.get("Types", []))
+    ]
     for name, r in resources.items():
         out["resource_formats"][f"{prefix}:{name}"] = r.get("ARNFormats", [])
     for action in doc.get("Actions", []):
@@ -64,6 +68,7 @@ def main() -> int:
     action_resources: dict[str, list[str]] = {}
     action_keys: dict[str, list[str]] = {}
     resource_formats: dict[str, list[str]] = {}
+    multivalued: set[str] = set()
     failed: list[str] = []
     with ThreadPoolExecutor(max_workers=8) as pool:
         for entry, result in zip(index, pool.map(lambda e: _safe(service_actions, e), index)):
@@ -74,6 +79,7 @@ def main() -> int:
                 action_resources.update(result["action_resources"])
                 action_keys.update(result["action_keys"])
                 resource_formats.update(result["resource_formats"])
+                multivalued.update(result["multivalued_keys"])
     if failed:
         print(f"failed to fetch {len(failed)} services: {', '.join(failed)}", file=sys.stderr)
         return 1
@@ -87,6 +93,7 @@ def main() -> int:
         "action_resources": action_resources,
         "action_keys": action_keys,
         "resource_formats": resource_formats,
+        "multivalued_keys": sorted(multivalued, key=str.lower),
     }
     with gzip.open(args.output, "wt", encoding="utf-8") as fh:
         json.dump(payload, fh, separators=(",", ":"))
