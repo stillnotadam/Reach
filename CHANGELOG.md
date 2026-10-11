@@ -6,6 +6,11 @@
 
 - `reach audit --html FILE`: a self-contained HTML report. Every ALLOWED cell shows its witness request, the
   statements that allow it (found by the reference evaluator), and a `reach can` command that reproduces it.
+- Planted instructions and tool poisoning: `reach agents` finds the text each agent loads (instruction files, rules,
+  skills, subagents, commands, installed plugins, and local MCP servers' source) and checks it. Tool, skill and
+  subagent descriptions are checked by Reach itself (secrets plus concealment, override phrasing, shadowing,
+  `<IMPORTANT>` blocks); whole files are scanned with Husk when installed (`reach-security[husk]`). Planted
+  instructions complete the trifecta's untrusted-input leg with no human gate. SARIF rules REACH005 and REACH006.
 - IPv6: IP keys are 128-bit, so IPv6 networks and sources are decided exactly. Mixed families, IPv4-mapped sources
   and malformed networks follow AWS as measured with `validation/ip_probe.py` (finding 7: 460 cases, 0
   disagreements). A malformed network is now decided exactly when the key is absent.

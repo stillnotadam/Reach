@@ -18,6 +18,7 @@ from .audit import Report, audit
 from .blast import Capability, Resolution, capabilities, resolve_profiles
 from .catalog import Catalog, bundled
 from .conditions import ContextValue
+from .context import husk_available, malicious, scan_inventory
 from .engine import Environment, Principal, Query, ResourcePolicy, Result, Verdict, decide
 from .loaders import AuthorizationDetails, trust_policy
 from .org import Organization
@@ -162,6 +163,25 @@ def _render_inventory(inv: Inventory, colour: bool) -> str:
         for cred in agent.credentials:
             detail = f" ({cred.detail})" if cred.detail else ""
             lines.append(f"    holds {cred.kind}: {cred.name}{detail}")
+        if agent.context:
+            roles: dict[str, int] = {}
+            for f in agent.context:
+                roles[f.role] = roles.get(f.role, 0) + 1
+            summary = ", ".join(f"{n} {role}" for role, n in roles.items())
+            if all(f.scanned for f in agent.context):
+                scanned = "scanned by Husk"
+            elif all(f.checked for f in agent.context):
+                scanned = "descriptions checked; not scanned by Husk"
+            else:
+                scanned = "not checked"
+            lines.append(f"    reads {len(agent.context)} context file(s): {summary}  {dim}({scanned}){reset}")
+            for f in agent.context:
+                for issue in f.injected:
+                    at = f":{issue.line}" if issue.line else ""
+                    lines.append(f"    {red}! planted instructions in {f.role} {f.path}{at}: {issue.short}{reset}")
+                for issue in malicious(f):
+                    at = f":{issue.line}" if issue.line else ""
+                    lines.append(f"    {red}! {issue.severity} in {f.role} {f.path}{at}: {issue.short[:160]}{reset}")
         if not agent.tools and agent.local:
             lines.append(f"    {dim}no MCP servers{reset}")
         for tool in agent.tools:
@@ -189,6 +209,10 @@ def _render_inventory(inv: Inventory, colour: bool) -> str:
         lines += [f"  {a.name} / {t.name}: {c.name}  ({c.source})" for a, t, c in hardcoded]
     for error in inv.errors:
         lines.append(f"  {dim}could not read {error}{reset}")
+    if any(f.checked and not f.scanned for a in inv.agents for f in a.context):
+        lines += ["", f"{dim}Only tool, skill and subagent descriptions were checked for planted instructions. "
+                      "To scan whole files (instructions, rules, scripts) with Husk: "
+                      f'pip install "reach-security[husk]"{reset}']  # fmt: skip
     return "\n".join(lines)
 
 
@@ -257,6 +281,7 @@ def cmd_agents(args: argparse.Namespace) -> int:
         appdata=home / "AppData" / "Roaming" if home else None,
         environ={} if home else None,
     )
+    scanned = 0 if args.no_scan else scan_inventory(inv, husk=True)
     resolutions: list[Resolution] = []
     results: dict[str, list[Capability] | str] = {}  # capabilities, or why there are none
     if args.resolve:
@@ -277,6 +302,7 @@ def cmd_agents(args: argparse.Namespace) -> int:
             for a in assessments
         ]
         payload["resolutions"] = [asdict(r) for r in resolutions]
+        payload["husk"] = {"available": husk_available(), "files_scanned": scanned}
         payload["capabilities"] = {k: v if isinstance(v, str) else [asdict(c) for c in v] for k, v in results.items()}
         print(json.dumps(payload, indent=2, default=str))
     else:
@@ -428,6 +454,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--fail-on", choices=["critical", "high"], help="exit 1 if any agent's trifecta is at least this severe"
     )
     agents.add_argument("--sarif", metavar="FILE", help="also write findings as SARIF 2.1.0 (GitHub code scanning)")
+    agents.add_argument(
+        "--no-scan", action="store_true", help="do not scan the text agents load (instructions, skills) with Husk"
+    )
     agents.add_argument(
         "--resolve",
         action="store_true",

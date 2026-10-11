@@ -65,7 +65,8 @@ Reach is built in phases. Each one ships something usable on its own.
 
 - [x] Label capabilities as untrusted input, private data or exfiltration, per agent, with the source of each leg
 - [x] Severity (critical: every leg has an ungated way; high: a human approval stands in the way) and the cheapest leg to break
-- [ ] Injected text in files the agent reads (repositories, dependencies) as untrusted input
+- [x] Text the agent loads as untrusted input: instruction files, rules, skills, subagents, commands, plugins, local MCP servers' tool descriptions (tool poisoning), with Husk for whole files
+- [ ] Remote MCP servers' tool descriptions (needs a read-only `tools/list` without running the server); files the agent reads on demand (a cloned repository's source, dependencies)
 - [x] Pre-approvals in agent settings (`WebFetch`, `Bash(curl:*)`, `Bash(aws:*)`, a whole MCP server) are ungated legs
 - [x] SARIF 2.1.0 output and a GitHub Action that uploads it to code scanning
 - [ ] BloodHound OpenGraph and HTML output

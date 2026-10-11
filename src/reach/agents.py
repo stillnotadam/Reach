@@ -34,7 +34,10 @@ import subprocess
 import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .context import ContextFile
 
 # --- credential classification ---------------------------------------------------
 
@@ -114,6 +117,10 @@ class Tool:
     command: str = ""  # executable and arguments, secrets redacted
     url: str = ""  # scheme://host/path only: no userinfo, no query string
     credentials: list[Credential] = field(default_factory=list)
+    # Local scripts and directories the command runs, and its working directory: where a local server's tool
+    # descriptions are written (context.py scans them). Never secret-shaped values.
+    paths: list[str] = field(default_factory=list)
+    cwd: str = ""
 
 
 # How freely an agent can run shell commands:
@@ -138,6 +145,7 @@ class Agent:
     denied: list[str] = field(default_factory=list)  # tools the agent's own settings deny (e.g. WebFetch)
     allowed: list[str] = field(default_factory=list)  # tool rules that run without approval (e.g. Bash(curl:*))
     settings: list[str] = field(default_factory=list)  # settings files the mode and rules were read from
+    context: list[ContextFile] = field(default_factory=list)  # text it loads into its context (context.py)
     # CI agents only: untrusted triggers, the `if:` gate on them, and whether the token can write.
     triggers: list[str] = field(default_factory=list)
     gate: str = ""
@@ -250,6 +258,16 @@ def _redact_args(args: list[str], source: str) -> tuple[str, list[Credential]]:
     return " ".join(shown), found
 
 
+_SCRIPT = re.compile(r"\.(py|js|mjs|cjs|ts|mts|sh|ps1)$", re.I)
+
+
+def _local_path(arg: str) -> bool:
+    """Does a command-line argument name a local script or directory (rather than a flag, URL or package)?"""
+    if arg.startswith("-") or "://" in arg or _SECRET_PREFIXES.search(arg) or arg.startswith("@"):
+        return False
+    return bool(_SCRIPT.search(arg)) or arg.startswith((".", "/", "~")) or bool(re.match(r"^[A-Za-z]:[\\/]", arg))
+
+
 def parse_server(name: str, spec: dict[str, Any], source: str) -> Tool:
     """One MCP server entry, in any of the common config dialects."""
     url = spec.get("url") or spec.get("serverUrl") or spec.get("httpUrl") or ""
@@ -264,6 +282,8 @@ def parse_server(name: str, spec: dict[str, Any], source: str) -> Tool:
     if command:
         tool.command, found = _redact_args([str(command), *args], source)
         tool.credentials.extend(found)
+        tool.paths = [a for a in args if _local_path(a)]
+        tool.cwd = str(spec.get("cwd") or "")
     for env_name, value in (spec.get("env") or {}).items():
         kind = _env_kind(env_name)
         if kind is None:
@@ -661,7 +681,10 @@ def discover(
     home = home or Path.home()
     environ = dict(os.environ) if environ is None else environ
     appdata = appdata or Path(environ.get("APPDATA") or home / "AppData" / "Roaming")
+    from .context import discover_context  # noqa: PLC0415 - context.py builds on this module
+
     inv = Inventory()
     discover_agents(inv, home, appdata, project)
     discover_ambient(inv, home, environ, project)
+    discover_context(inv, home, project)
     return inv

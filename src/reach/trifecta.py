@@ -206,6 +206,16 @@ def assess(agent: Agent, inv: Inventory, capabilities: dict[str, list[Capability
         if agent.shell_mode == "unrestricted":
             add(EXFIL, "shell on the runner with network access", False, "remove Bash from the agent's allowed tools")
 
+    # Instructions already planted in what the agent reads (Husk's findings, context.py): untrusted input
+    # with nobody in the way when the text loads by itself; a slash command waits for a person to run it.
+    for f in agent.context:
+        planted = f.injected
+        if planted:
+            where = f"{f.path}:{planted[0].line}" if planted[0].line else f.path
+            more = f" (+{len(planted) - 1} more)" if len(planted) > 1 else ""
+            add(UNTRUSTED, f"instructions planted in {f.role} {where}: {planted[0].short}{more}", not f.automatic,
+                f"remove the planted text from {f.path}, or stop loading this {f.role}")  # fmt: skip
+
     for tool in agent.tools:
         if _mcp_rules(agent.denied, tool.name)[0]:
             continue  # every tool of this server is denied, so it provides nothing

@@ -101,8 +101,28 @@ triggers, `if:` gates, token permissions and secrets. All three legs with an ung
 three behind a human approval is **high**. Reach names the cheapest leg to break.
 
 Pre-approvals count: a Claude Code `allow` rule for `WebFetch`, a network command (`Bash(curl:*)`), a credential reader
-(`Bash(aws:*)`) or a whole MCP server (`mcp__github`) removes the human gate on that leg. Not covered yet: injected text
-inside files the agent reads (a cloned repository, a dependency).
+(`Bash(aws:*)`) or a whole MCP server (`mcp__github`) removes the human gate on that leg.
+
+### Planted instructions and tool poisoning
+
+An agent also reads text nobody typed into the chat: instruction files (`CLAUDE.md`, `AGENTS.md`, Cursor, Windsurf and
+Copilot rules), skills, subagents and slash commands (yours, the project's, and installed plugins'), and the name and
+description of every MCP tool, which the model sees as soon as a server connects. Whoever wrote that text can steer the
+agent. Reach finds it for each agent and checks it:
+
+- **Tool, skill and subagent descriptions**, extracted from local MCP server source (Python docstrings and
+  `description=`, JavaScript/TypeScript `server.tool(...)` and `description:`) and from frontmatter. A description that
+  points the agent at secrets (`~/.ssh`, `.aws/credentials`, another agent's `mcp.json`) and tells it to keep quiet is
+  tool poisoning; override phrasing, instructions about other tools (shadowing) and `<IMPORTANT>` blocks are flagged
+  too. Built in, no extra dependency.
+- **Whole files**, with [Husk](https://github.com/ctrl-adam/Husk) (`pip install "reach-security[husk]"`): directives
+  hidden in comments, override language, invisible and bidirectional Unicode, and skill or server code that sends
+  credentials out or contacts a bare IP.
+
+Instructions found this way are untrusted input already in place: they complete the trifecta's first leg with no
+human gate, because the text loads by itself (a slash command, which a person has to run, stays gated). Malicious
+code is reported on the agent. Servers run from a registry (`npx`, `uvx`) are never downloaded or run to inspect
+them. `--no-scan` skips all of this.
 
 ### In CI: GitHub code scanning
 
@@ -126,6 +146,8 @@ pull requests, each pointing at the line that causes it. Locally: `reach agents 
 | REACH002 | Secret hardcoded in an agent or MCP config | error |
 | REACH003 | Agent setting that removes a human check | warning |
 | REACH004 | Secret in a `.env` file committed to git | error |
+| REACH005 | Instructions planted in text an agent loads (tool poisoning, injected rules) | error |
+| REACH006 | Skill or local MCP server code that steals or sends data (Husk) | error |
 
 Alerts keep their identity when lines move, and no secret value is ever written to the report.
 

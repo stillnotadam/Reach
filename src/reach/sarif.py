@@ -1,7 +1,8 @@
 """SARIF 2.1.0 output for `reach agents`, the format GitHub code scanning ingests.
 
 Each finding becomes one result: a lethal trifecta per agent, a hardcoded
-secret per credential, and each risky agent setting. Results point at the
+secret per credential, each risky agent setting, and each Husk finding in
+the text agents load (planted instructions, malicious skill or server code). Results point at the
 file and, where Reach can find it, the line that causes them. Files inside
 the scanned project get repository-relative URIs (so code scanning can show
 them on pull requests); files elsewhere keep absolute file URIs.
@@ -19,6 +20,7 @@ from typing import Any
 
 from . import __version__
 from .agents import Agent, Credential, Inventory, Tool
+from .context import ContextFile, Issue, malicious
 from .trifecta import LEGS, Assessment
 
 SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json"
@@ -42,6 +44,15 @@ RULES: tuple[tuple[str, str, str, str, str, str], ...] = (
      "Secret in a .env file that is committed to git",
      "The value is in the repository history, readable by anyone with the repository and by agents working in it. "
      "Rotate it, remove the file from git and add it to .gitignore.", "error", "8.5"),
+    ("REACH005", "PlantedInstructions",
+     "Instructions aimed at the agent in text it loads into its context",
+     "An instruction file, rule, skill, subagent, command or local MCP server's tool descriptions contain text "
+     "that tells the agent what to do: override phrasing, a directive hidden in a comment, or invisible Unicode. "
+     "The agent reads it with the authority of your own setup. Found by Husk.", "error", "8.8"),
+    ("REACH006", "MaliciousContextCode",
+     "Code in a skill or local MCP server that steals or sends data",
+     "A script or server the agent runs does something Husk blocks on: sends credentials over the network, "
+     "contacts a bare IP, runs a download. Remove it and review where it came from.", "error", "9.3"),
 )  # fmt: skip
 _LEVEL = {"critical": "error", "high": "warning"}
 _SEVERITY = {"critical": "9.5", "high": "7.5"}
@@ -163,6 +174,31 @@ def _committed_result(cred: Credential, locate: _Locator) -> dict[str, Any]:
     }  # fmt: skip
 
 
+def _context_result(rule: str, f: ContextFile, issue: Issue, agents: list[str], locate: _Locator) -> dict[str, Any]:
+    level = "error" if issue.severity in ("critical", "high") or rule == "REACH005" else "warning"
+    return {
+        "ruleId": rule,
+        "level": level,
+        "message": {"text": f"{f.role} read by {', '.join(agents)}: {issue.message}"},
+        "locations": [locate(f.path, issue.line or 1)],
+        "partialFingerprints": {"reach/v1": _fingerprint(rule, f.path, issue.short)},
+        "properties": {"security-severity": "8.8" if rule == "REACH005" else "9.3", "severity": issue.severity},
+    }
+
+
+def _context_results(inv: Inventory, locate: _Locator) -> list[dict[str, Any]]:
+    """One result per finding in a file, however many agents read the file."""
+    readers: dict[tuple[str, str, int | None, str], tuple[ContextFile, Issue, list[str]]] = {}
+    for agent in inv.agents:
+        for f in agent.context:
+            for rule, issues in (("REACH005", f.injected), ("REACH006", malicious(f))):
+                for issue in issues:
+                    entry = readers.setdefault((rule, f.path, issue.line, issue.short), (f, issue, []))
+                    if agent.name not in entry[2]:
+                        entry[2].append(agent.name)
+    return [_context_result(rule, f, issue, agents, locate) for (rule, *_), (f, issue, agents) in readers.items()]
+
+
 def to_sarif(inv: Inventory, assessments: list[Assessment], project: Path | None = None) -> dict[str, Any]:
     locate = _Locator(project)
     by_name = {a.name: a for a in inv.agents}
@@ -177,6 +213,7 @@ def to_sarif(inv: Inventory, assessments: list[Assessment], project: Path | None
     for cred in inv.ambient:
         if cred.hardcoded and cred.detail.startswith("tracked in git"):
             results.append(_committed_result(cred, locate))
+    results.extend(_context_results(inv, locate))
     rules = [
         {
             "id": rid,
