@@ -156,3 +156,12 @@ def test_unreadable_config_is_reported_not_fatal(tmp_path):
 )
 def test_env_names(name, kind):
     assert _env_kind(name) == kind
+
+
+def test_scanning_another_home_ignores_the_callers_environment(tmp_path, monkeypatch, capsys):
+    from reach.cli import main  # noqa: PLC0415
+
+    monkeypatch.setenv("CALLER_API_TOKEN", "not-in-the-scanned-home")
+    (tmp_path / "h").mkdir()
+    assert main(["agents", "--home", str(tmp_path / "h"), "--json"]) == 0
+    assert "CALLER_API_TOKEN" not in capsys.readouterr().out

@@ -19,7 +19,8 @@ Reach reports both agents as **CRITICAL**. Each one combines untrusted input, pr
 with no human approval in the way. For each, it names the cheapest leg to break. It also flags the hardcoded GitHub
 token, and prints neither that token nor the database password.
 
-`--home` points at an empty directory so the scan ignores your own machine. Drop it to scan your real setup.
+`--home` points at an empty directory, so the scan ignores your own config files and your shell's environment
+variables. Drop it to scan your real setup.
 
 ## What the agent's AWS identity can do
 

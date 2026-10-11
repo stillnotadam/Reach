@@ -228,7 +228,10 @@ def cmd_agents(args: argparse.Namespace) -> int:
     inv = discover(
         home=home,
         project=Path(args.project) if args.project else None,
-        appdata=home / "AppData" / "Roaming" if home else None,  # a scanned home brings its own AppData
+        # A scanned home brings its own AppData, and the environment variables of the shell running Reach
+        # belong to you, not to that home.
+        appdata=home / "AppData" / "Roaming" if home else None,
+        environ={} if home else None,
     )
     resolutions: list[Resolution] = []
     results: dict[str, list[Capability] | str] = {}  # capabilities, or why there are none
@@ -305,7 +308,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     agents = sub.add_parser("agents", help="inventory AI agents, their MCP tools and the credentials they can use")
     agents.add_argument("--project", help="also scan this project directory (.mcp.json, .cursor/, .vscode/, .env)")
-    agents.add_argument("--home", help="home directory to scan (default: yours)")
+    agents.add_argument(
+        "--home",
+        help="home directory to scan instead of yours (your environment variables are then ignored too)",
+    )
     agents.add_argument("--json", action="store_true")
     agents.add_argument("--no-colour", action="store_true")
     agents.add_argument("--fail-on-hardcoded", action="store_true", help="exit 1 if a secret is hardcoded in a config")

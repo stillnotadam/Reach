@@ -31,6 +31,7 @@ First release.
   - the credentials handed to its tools;
   - ambient credentials, for local agents with a shell.
 - Flags secrets hardcoded in configs or committed in `.env` files. No secret value is ever output.
+- `--home` scans another home directory, with its own AppData and none of your environment variables.
 - `--resolve` maps AWS profiles to principals. `--authz` evaluates high-impact capabilities for each principal.
 - Lethal-trifecta analysis per agent (untrusted input, private data, exfiltration), with a severity and the cheapest leg
   to break.

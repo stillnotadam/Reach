@@ -1,5 +1,8 @@
 # Reach
 
+[![CI](https://github.com/ctrl-adam/Reach/actions/workflows/ci.yml/badge.svg)](https://github.com/ctrl-adam/Reach/actions/workflows/ci.yml)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
+
 **Prove what cloud credentials, and the AI agents holding them, can actually reach.**
 
 AI agents run with real credentials: an AWS profile on a laptop, a GitHub token in an MCP config, a write token in a CI
