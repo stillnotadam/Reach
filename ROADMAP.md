@@ -43,6 +43,12 @@ Reach is built in phases. Each one ships something usable on its own.
 - [ ] Bounded search for paths, reporting each step with its witness
 - [ ] **Benchmark** against Datadog's pathfinding.cloud catalogue and other open-source tools, with published methodology
 
+## Scale
+
+- [x] `reach audit`: every principal against the high-impact questions, in parallel; benchmarks to 5,000 principals
+- [x] Per-resource-type solving: ~1000x faster on actions with many resource types
+- [ ] Load an organization's SCP tree and RCPs, so an audit covers every account in an organization
+
 ## Phase 3: agent discovery
 
 - [x] `reach agents`: Claude Code (user and per-project), Claude Desktop, Cursor, VS Code, Windsurf; MCP servers over stdio and HTTP

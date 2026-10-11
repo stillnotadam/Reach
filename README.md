@@ -57,6 +57,20 @@ ALLOWED  iam:CreateAccessKey on *
 Queries are existential: `reach can … 's3:*' 'arn:aws:s3:::customer-pii/*'` asks whether *any* S3 action on *any*
 object in the bucket is reachable, and the witness shows one.
 
+## Audit a whole account
+
+```console
+$ aws iam get-account-authorization-details --output json > authz.json
+$ reach audit --authz authz.json
+```
+
+`reach audit` decides every user and role against nine high-impact questions (read secrets, decrypt with KMS, write
+S3, modify IAM, assume roles, start compute, ...) and prints a matrix plus, per question, who can. `sts:AssumeRole` is
+checked against every role's trust policy, since a trust policy can grant on its own. Principals run in parallel
+across worker processes: 5,000 principals, 45,000 decisions, in about 40 seconds on a 32-thread desktop, with no
+UNKNOWN verdicts ([benchmarks](docs/BENCHMARKS.md)). `--json` for machine output, `--fail-on-allowed` for CI,
+`--scp LAYER=FILE` to apply SCPs.
+
 ## Agents
 
 ```console

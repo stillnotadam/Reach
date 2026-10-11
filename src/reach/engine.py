@@ -170,7 +170,13 @@ class _Encoding:
     """All symbolic pieces of one query, built once and reused by every solver call."""
 
     def __init__(
-        self, principal: Principal, query: Query, env: Environment, catalog: Catalog | None, action: str | None
+        self,
+        principal: Principal,
+        query: Query,
+        env: Environment,
+        catalog: Catalog | None,
+        action: str | None,
+        resource_types: tuple[str, ...] | None = None,
     ):
         fixed: dict[str, ContextValue] = {
             "aws:PrincipalArn": principal.arn,
@@ -193,7 +199,8 @@ class _Encoding:
 
         if action is not None:
             # Each action applies only to its own resource types (FINDINGS.md, finding 2).
-            globs = catalog.resource_globs(action) if catalog is not None else ()
+            # resource_types narrows the action to some of its resource types (see _units).
+            globs = resource_types if resource_types is not None else catalog.resource_globs(action) if catalog else ()
             action_term = z3.And(
                 self.action == sval(action), self.arn.matches_any(globs) if globs else z3.BoolVal(True)
             )
@@ -613,19 +620,41 @@ def _action_classes(
     return list(classes.values()), notes
 
 
+def _units(actions: list[str | None], catalog: Catalog | None) -> list[tuple[str | None, tuple[str, ...] | None]]:
+    """One solver problem per (action class, resource type).
+
+    An action that applies to several resource types makes the resource one big disjunction of ARN patterns,
+    which Z3's string solver handles erratically: ec2:RunInstances (18 resource types) on "*" took 2 to 60 s
+    across runs, while each type alone takes milliseconds. Splitting is exact: the request is allowed if it
+    is allowed for some type, and denied only if it is denied for every type.
+    """
+    units: list[tuple[str | None, tuple[str, ...] | None]] = []
+    for action in actions:
+        globs = catalog.resource_globs(action) if action is not None and catalog is not None else ()
+        if len(globs) > 1:
+            units.extend((action, (g,)) for g in globs)
+        else:
+            units.append((action, None))
+    return units
+
+
 def _explain_classes(denied: list[_Encoding], principal: Principal, query: Query) -> list[str]:
     if not denied:
         return [f"No identity-based or resource policy grants any action matching {query.action}."]
-    if len(denied) == 1:
-        return _explain_denial(denied[0], principal)
+    by_action: dict[str | None, list[str]] = {}
+    for enc in denied:
+        reasons = by_action.setdefault(enc.rep, [])
+        reasons.extend(r for r in _explain_denial(enc, principal) if r not in reasons)
+    if len(by_action) == 1:
+        return next(iter(by_action.values()))
     shown = 3
-    reasons: list[str] = []
-    for enc in denied[:shown]:
-        name = enc.catalog.canonical(enc.rep) if enc.catalog is not None and enc.rep else enc.rep
-        reasons.extend(f"{name}: {r}" for r in _explain_denial(enc, principal))
-    if len(denied) > shown:
-        reasons.append(f"... and {len(denied) - shown} more action groups, each also proven denied.")
-    return reasons
+    out: list[str] = []
+    for rep, reasons in list(by_action.items())[:shown]:
+        name = denied[0].catalog.canonical(rep) if denied[0].catalog is not None and rep else rep
+        out.extend(f"{name}: {r}" for r in reasons)
+    if len(by_action) > shown:
+        out.append(f"... and {len(by_action) - shown} more action groups, each also proven denied.")
+    return out
 
 
 _BUNDLED = object()
@@ -651,8 +680,8 @@ def decide(
     pending = None  # first class that is allowed only under assumptions
     gave_up = False
     denied: list[_Encoding] = []
-    for action in actions:
-        enc = _Encoding(principal, query, env, cat, action)
+    for action, types in _units(actions, cat):
+        enc = _Encoding(principal, query, env, cat, action, types)
         result.notes.extend(n for n in enc.notes if n not in result.notes)
         optimistic, opt_model = _model(enc, enc.allowed)
         if optimistic == z3.unsat:

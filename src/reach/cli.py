@@ -14,6 +14,7 @@ from pathlib import Path
 
 from . import __version__
 from .agents import Inventory, discover
+from .audit import Report, audit
 from .blast import Capability, Resolution, capabilities, resolve_profiles
 from .catalog import Catalog, bundled
 from .conditions import ContextValue
@@ -282,6 +283,76 @@ def cmd_agents(args: argparse.Namespace) -> int:
     return 1 if args.fail_on_hardcoded and inv.hardcoded else 0
 
 
+_CELL = {"allowed": "ALLOW", "denied": "-", "unknown": "?", "error": "ERR"}
+
+
+def _short(arn: str) -> str:
+    return arn.split(":", 5)[-1]
+
+
+def _render_audit(report: Report, colour: bool) -> str:
+    red, dim, bold, reset = ("\033[31m", "\033[2m", "\033[1m", "\033[0m") if colour else ("", "", "", "")
+    labels = [q[0] for q in report.questions]
+    width = max([len(_short(r.principal)) for r in report.rows] + [9])
+    cols = [max(len(label), 5) for label in labels]
+    header = "  ".join(label.ljust(c) for label, c in zip(labels, cols))
+    lines = [f"{bold}{'principal'.ljust(width)}  {header}{reset}"]
+    style = {"allowed": red, "denied": dim}
+    for row in sorted(report.rows, key=lambda r: (r.kind, r.principal)):
+        cells = []
+        for a, c in zip(row.answers, cols):
+            colour_on = style.get(a.verdict, "")
+            cells.append(f"{colour_on}{_CELL[a.verdict].ljust(c)}{reset if colour_on else ''}")
+        lines.append(_short(row.principal).ljust(width) + "  " + "  ".join(cells))
+    lines.append("")
+    lines.append(f"{bold}Who can{reset}")
+    for label in labels:
+        verdicts = report.who_can(label)
+        allowed = sorted(_short(p) for p in verdicts.get("allowed", []))
+        unknown = verdicts.get("unknown", [])
+        line = f"  {label}: {len(allowed)} proven"
+        if allowed:
+            line += f" ({', '.join(allowed[:8])}{', ...' if len(allowed) > 8 else ''})"
+        if unknown:
+            line += f", {len(unknown)} unknown"
+        lines.append(line)
+    errors = sum(a.verdict == "error" for r in report.rows for a in r.answers)
+    lines.append("")
+    lines.append(
+        f"{dim}{len(report.rows)} principals x {len(report.questions)} questions = {report.decisions} decisions in "
+        f"{report.seconds:.1f} s on {report.workers} worker(s)" + (f"; {errors} errors" if errors else "") + reset
+    )
+    lines.append(
+        f"{dim}ALLOW comes with a witness request. '-' is a proof over the policies in this snapshot: identity "
+        "policies, boundaries, SCPs given with --scp, and role trust policies. Bucket, key and other resource "
+        f"policies are not in an IAM snapshot, and roles in other accounts are not checked.{reset}"
+    )
+    return "\n".join(lines)
+
+
+def cmd_audit(args: argparse.Namespace) -> int:
+    details = AuthorizationDetails.load(args.authz)
+    total = len(args.principal) if args.principal else len(details.principal_arns())
+    done = 0
+
+    def progress(_row: object) -> None:
+        nonlocal done
+        done += 1
+        if not args.json and sys.stderr.isatty():
+            print(f"\r  {done}/{total} principals", end="", file=sys.stderr, flush=True)
+
+    report = audit(
+        details, _environment(args), principals=args.principal or None, workers=args.workers, progress=progress
+    )
+    if not args.json and sys.stderr.isatty():
+        print(file=sys.stderr)
+    if args.json:
+        print(json.dumps(asdict(report), indent=2, default=str))
+    else:
+        print(_render_audit(report, sys.stdout.isatty() and not args.no_colour))
+    return 1 if args.fail_on_allowed and any(a.verdict == "allowed" for r in report.rows for a in r.answers) else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="reach", description="Prove what cloud credentials can actually reach.")
     parser.add_argument("--version", action="version", version=f"reach {__version__}")
@@ -344,6 +415,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     agents.add_argument("--authz", help="with --resolve: account snapshot to evaluate what each principal can do")
     agents.set_defaults(func=cmd_agents)
+
+    aud = sub.add_parser("audit", help="every user and role in a snapshot against the high-impact questions")
+    aud.add_argument("--authz", required=True, help="output of `aws iam get-account-authorization-details`")
+    aud.add_argument("--principal", action="append", default=[], help="only this user/role (repeatable)")
+    aud.add_argument("--scp", action="append", default=[], metavar="LAYER=FILE", help="SCP at LAYER (repeatable)")
+    aud.add_argument("--session-policy", action="append", default=[], metavar="FILE")
+    aud.add_argument("--management-account", action="store_true")
+    aud.add_argument("--workers", type=int, help="worker processes (default: one per CPU)")
+    aud.add_argument("--json", action="store_true")
+    aud.add_argument("--no-colour", action="store_true")
+    aud.add_argument(
+        "--fail-on-allowed", action="store_true", help="exit 1 if any high-impact action is proven allowed"
+    )
+    aud.set_defaults(func=cmd_audit)
     return parser
 
 

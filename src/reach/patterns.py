@@ -129,9 +129,13 @@ class ArnVar:
         self.well_formed = [z3.Not(z3.Contains(seg, colon)) for seg in self.segments[:5]]
 
     def matches(self, pattern: str) -> z3.BoolRef:
+        if pattern == "*":
+            # Every resource. The segment variables already describe a well-formed ARN, and a regex over
+            # their concatenation is what made "*" queries slow (14 s for ec2:RunInstances on "*").
+            return z3.BoolVal(True)
         parts = pattern.split(":", 5)
         if len(parts) < 6:
-            # Not ARN-shaped (most often a bare "*"): match the whole string.
+            # Not ARN-shaped: match the whole string.
             return z3.InRe(self.full, glob(pattern)) if has_wildcard(pattern) else self.full == sval(pattern)
         terms = [
             z3.InRe(seg, glob(part)) if has_wildcard(part) else seg == sval(part)
@@ -143,7 +147,37 @@ class ArnVar:
         return z3.And(terms) if len(terms) > 1 else terms[0]
 
     def matches_any(self, patterns: tuple[str, ...]) -> z3.BoolRef:
-        terms = [self.matches(p) for p in patterns]
+        """At least one pattern matches.
+
+        Patterns that agree on their first five segments are merged: their resource parts become one regex
+        union on the sixth segment. The formula is equivalent, but Z3 handles one membership in a union far
+        better than a disjunction of memberships on the same variable: ec2:RunInstances applies to 18
+        resource types, and their disjunction alone took 4 s to solve; merged, it takes milliseconds.
+        """
+        if "*" in patterns:
+            return z3.BoolVal(True)
+        terms: list[z3.BoolRef] = []
+        groups: dict[tuple[str, ...], list[str]] = {}
+        for p in patterns:
+            parts = p.split(":", 5)
+            if len(parts) < 6:
+                terms.append(self.matches(p))
+            else:
+                groups.setdefault(tuple(parts[:5]), []).append(parts[5])
+        for head, tails in groups.items():
+            group = [
+                z3.InRe(seg, glob(part)) if has_wildcard(part) else seg == sval(part)
+                for seg, part in zip(self.segments, head)
+                if part != "*"
+            ]
+            if "*" not in tails:
+                unique = sorted(set(tails))
+                if len(unique) == 1 and not has_wildcard(unique[0]):
+                    group.append(self.segments[5] == sval(unique[0]))
+                else:
+                    regexes = [glob(t) for t in unique]
+                    group.append(z3.InRe(self.segments[5], z3.Union(*regexes) if len(regexes) > 1 else regexes[0]))
+            terms.append(z3.And(group) if len(group) > 1 else group[0] if group else z3.BoolVal(True))
         if not terms:
             return z3.BoolVal(False)
         return z3.Or(terms) if len(terms) > 1 else terms[0]

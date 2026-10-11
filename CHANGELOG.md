@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- "Assume roles" in `reach agents --authz` asked `sts:AssumeRole` on `*` without any trust policy, so a principal
+  that a role's trust policy names directly was reported DENIED. It is now decided against every role's trust policy.
+- Actions with many resource types were slow and erratic in Z3 (`ec2:RunInstances` on `*`: 2 to 60 s). They are now
+  decided once per resource type: about 16 ms, exact. The test suite runs 2.5 times faster.
 - Policy variables in `Resource` elements were read as literal text, so Reach could prove DENIED a request AWS allows
   (`validation/FINDINGS.md`, finding 5).
 - `Bool` compared lowercase strings and restricted any key under it to `true`/`false`, which could prove DENIED a
@@ -11,6 +15,9 @@
 
 ### Added
 
+- `reach audit`: every user and role in a snapshot against the high-impact questions, in parallel, with a matrix,
+  per-question "who can", JSON and `--fail-on-allowed`. 5,000 principals in about 40 s on 32 threads
+  (`docs/BENCHMARKS.md`, `scripts/synth_account.py`, `scripts/benchmark.py`).
 - Policy variables, exact: `${aws:username}`, principal tags, pinned keys, `${key, 'default'}`, `${*}`/`${?}`/`${$}`,
   and symbolic substitution for values the request decides. Only under `Version: 2012-10-17`, as in AWS.
 - `ForAnyValue`/`ForAllValues` over multi-valued and single-valued keys, with a bound on set sizes that keeps DENIED
