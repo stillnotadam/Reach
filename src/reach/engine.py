@@ -56,7 +56,16 @@ from .conditions import STRING_OPS, Context, ContextValue, encode_conditions, is
 from .patterns import PRINTABLE, ArnVar, glob, has_wildcard, matches_any, sval
 from .policy import Policy, Statement
 from .principals import Match, classify
-from .values import IPV6_WITNESS, TIME_KEYS, principal_type, render_ipv4, render_time, username
+from .values import (
+    IPV6_WITNESS,
+    RCP_EXEMPT_ACTIONS,
+    RCP_SERVICES,
+    TIME_KEYS,
+    principal_type,
+    render_ipv4,
+    render_time,
+    username,
+)
 from .variables import FREE, Pattern, SymbolicCondition, Var, resolve_statement
 
 SOLVER_TIMEOUT_MS = 30_000
@@ -100,6 +109,12 @@ class Environment:
     session_policies: list[Policy] = field(default_factory=list)
     # The organization's management account is not affected by SCPs.
     management_account: bool = False
+    # Resource control policies of the account that owns the resource, every level from root to account.
+    # Empty when there are none, or when the resource is in the management account (RCPs never apply there).
+    rcps: list[Policy] = field(default_factory=list)
+    # Context the organization fixes: aws:PrincipalOrgID, aws:PrincipalOrgPaths, aws:ResourceOrgID, ...
+    # (None pins a key as absent, e.g. aws:PrincipalOrgID for a caller outside any organization).
+    org_context: dict[str, ContextValue] = field(default_factory=dict)
 
 
 @dataclass
@@ -182,9 +197,12 @@ class _Encoding:
             "aws:PrincipalArn": principal.arn,
             "aws:PrincipalAccount": principal.account,
             "aws:PrincipalType": principal_type(principal.arn),
+            # Reach's principals are IAM users and role sessions, never AWS service principals.
+            "aws:PrincipalIsAWSService": "false",
             "aws:username": username(principal.arn),
         }
         fixed.update({f"aws:PrincipalTag/{k}": v for k, v in principal.tags.items()})
+        fixed.update(env.org_context)
         fixed.update(query.context)
         self.ctx = Context(fixed, closed_prefixes=("aws:PrincipalTag/",), set_bounds=set_bounds(principal, query, env))
         self.action = z3.String("action")
@@ -237,6 +255,11 @@ class _Encoding:
                     self._collect_denies(p)
         for sp in env.session_policies:
             self._collect_denies(sp)
+        if env.rcps and not principal.is_service_linked:  # RCPs never restrict service-linked roles
+            for rcp in env.rcps:
+                for st in rcp.statements:
+                    if st.effect == "Deny" and classify(st, principal.arn):
+                        self.denies.append((st, z3.And(self._statement(st), self._rcp_scope(st))))
         if query.resource_policy is not None:
             for st in query.resource_policy.policy.statements:
                 if st.effect == "Deny" and classify(st, principal.arn):
@@ -402,6 +425,42 @@ class _Encoding:
     def _allows(self, policies: list[Policy]) -> z3.BoolRef:
         terms = [self._statement(s) for p in policies for s in p.statements if s.effect == "Allow"]
         return z3.Or(terms) if terms else z3.BoolVal(False)
+
+    def _rcp_scope(self, st: Statement) -> z3.BoolRef:
+        """An RCP restricts only actions of the services that support RCPs, minus documented exemptions.
+
+        AWS managed KMS keys are exempt too, but nothing in a key's ARN says whether AWS manages it: for kms
+        actions the Deny is an opaque, so it can block a witness yet never makes a DENIED proof on its own.
+        """
+        if self.rep is not None:
+            service = self.rep.split(":", 1)[0].lower()
+            if service not in RCP_SERVICES or self.rep.lower() in RCP_EXEMPT_ACTIONS:
+                return z3.BoolVal(False)
+            if service == "kms":
+                return self.ctx.opaque(st, "RCP on KMS: does not apply to AWS managed keys")
+            return z3.BoolVal(True)
+        # A free action string. The statement only matches actions of the services its own Action patterns
+        # name (RCPs must name a service), so only those need checking: usually one, often none. A 62-way
+        # disjunction over every RCP service made the fuzzer's free-action cases take 90 s.
+        if st.not_actions or any(":" not in a or has_wildcard(a.split(":", 1)[0]) for a in st.actions):
+            services = set(RCP_SERVICES)  # the patterns do not pin the service: check them all
+        else:
+            services = {a.split(":", 1)[0].lower() for a in st.actions}
+        covered = sorted(services & RCP_SERVICES)
+        if not covered:
+            return z3.BoolVal(False)
+        if len(covered) == len(services) and "kms" not in services:
+            return z3.BoolVal(True)  # every action the statement matches is in scope already
+        terms = []
+        for svc in covered:
+            term = z3.PrefixOf(sval(f"{svc}:"), self.action)
+            if svc == "kms":
+                exempt = z3.Or([self.action == sval(a) for a in sorted(RCP_EXEMPT_ACTIONS)])
+                term = z3.And(
+                    term, z3.Not(exempt), self.ctx.opaque(st, "RCP on KMS: does not apply to AWS managed keys")
+                )
+            terms.append(term)
+        return z3.Or(terms) if len(terms) > 1 else terms[0]
 
     def _collect_denies(self, policy: Policy) -> None:
         for s in policy.statements:

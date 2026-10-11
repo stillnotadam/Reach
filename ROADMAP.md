@@ -33,8 +33,8 @@ Reach is built in phases. Each one ships something usable on its own.
 - [x] Resource-based policies: principal matching, same-account grant paths, required policies (trust, KMS), cross-account
 - [x] Trust policies loaded from `get-account-authorization-details` for `sts:AssumeRole` queries
 - [ ] Verify against AWS: whether boundaries/session policies cap `Principal: "*"` grants; role-ARN vs session-ARN grants
-- [ ] RCPs (only for the services they apply to)
-- [ ] Load an organization's SCP tree from `organizations` API exports
+- [x] RCPs (only for the services they apply to, with the documented exemptions)
+- [x] Load an organization's SCP tree from `organizations` API exports (`scripts/export_org.py`, `--org`)
 
 ## Phase 2: multi-step privilege escalation, then v0.1
 
@@ -47,7 +47,7 @@ Reach is built in phases. Each one ships something usable on its own.
 
 - [x] `reach audit`: every principal against the high-impact questions, in parallel; benchmarks to 5,000 principals
 - [x] Per-resource-type solving: ~1000x faster on actions with many resource types
-- [ ] Load an organization's SCP tree and RCPs, so an audit covers every account in an organization
+- [x] `--org` for `reach can` and `reach audit`: SCP layers, RCPs and the org context keys
 
 ## Phase 3: agent discovery
 

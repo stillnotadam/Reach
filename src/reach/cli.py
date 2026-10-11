@@ -20,6 +20,7 @@ from .catalog import Catalog, bundled
 from .conditions import ContextValue
 from .engine import Environment, Principal, Query, ResourcePolicy, Result, Verdict, decide
 from .loaders import AuthorizationDetails, trust_policy
+from .org import Organization
 from .policy import PolicyError, load_policy_file
 from .sarif import to_sarif
 from .trifecta import LEGS, Assessment, assess_all
@@ -52,18 +53,27 @@ def _parse_context(items: list[str], absent: list[str]) -> dict[str, ContextValu
     return out
 
 
-def _environment(args: argparse.Namespace) -> Environment:
+def _environment(
+    args: argparse.Namespace, account: str | None = None, resource_account: str | None = None
+) -> Environment:
+    """--scp, --session-policy and --management-account, plus the SCP and RCP layers of --org for `account`."""
     layers: dict[str, list] = {}
     for spec in args.scp:
         layer, sep, path = spec.partition("=")
         if not sep:
             raise SystemExit(f"--scp expects LAYER=FILE (e.g. root=scp.json), got {spec!r}")
         layers.setdefault(layer, []).append(load_policy_file(path))
-    return Environment(
+    env = Environment(
         scp_layers=list(layers.items()),
         session_policies=[load_policy_file(p) for p in args.session_policy],
         management_account=args.management_account,
     )
+    if getattr(args, "org", None) and account:
+        org = Organization.load(args.org).environment(account, resource_account)
+        env.scp_layers = org.scp_layers + env.scp_layers
+        env.management_account = env.management_account or org.management_account
+        env.rcps = org.rcps
+    return env
 
 
 def _principal(args: argparse.Namespace) -> Principal:
@@ -110,7 +120,7 @@ def _render(result: Result, colour: bool) -> str:
 def cmd_can(args: argparse.Namespace) -> int:
     try:
         principal = _principal(args)
-        env = _environment(args)
+        env = _environment(args, principal.account, args.resource_account)
         catalog = None if args.no_catalog else Catalog.load(args.catalog) if args.catalog else bundled()
     except (OSError, PolicyError, KeyError, json.JSONDecodeError) as exc:
         print(f"reach: {exc}", file=sys.stderr)
@@ -341,9 +351,11 @@ def cmd_audit(args: argparse.Namespace) -> int:
         if not args.json and sys.stderr.isatty():
             print(f"\r  {done}/{total} principals", end="", file=sys.stderr, flush=True)
 
-    report = audit(
-        details, _environment(args), principals=args.principal or None, workers=args.workers, progress=progress
-    )
+    accounts = {arn.split(":")[4] for arn in details.principal_arns()}
+    if args.org and len(accounts) > 1:
+        raise SystemExit(f"--org: the snapshot spans several accounts ({', '.join(sorted(accounts))})")
+    env = _environment(args, next(iter(accounts), None))
+    report = audit(details, env, principals=args.principal or None, workers=args.workers, progress=progress)
     if not args.json and sys.stderr.isatty():
         print(file=sys.stderr)
     if args.json:
@@ -376,6 +388,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     org.add_argument("--session-policy", action="append", default=[], metavar="FILE")
     org.add_argument("--management-account", action="store_true", help="principal lives in the org management account")
+    org.add_argument("--org", metavar="FILE", help="AWS Organizations export (scripts/export_org.py): SCPs and RCPs")
     res = can.add_argument_group("resource-based policy")
     res.add_argument("--resource-policy", metavar="FILE", help="bucket policy, key policy, trust policy, ...")
     res.add_argument("--resource-account", metavar="ID", help="account owning the resource (default: principal's)")
@@ -422,6 +435,7 @@ def build_parser() -> argparse.ArgumentParser:
     aud.add_argument("--scp", action="append", default=[], metavar="LAYER=FILE", help="SCP at LAYER (repeatable)")
     aud.add_argument("--session-policy", action="append", default=[], metavar="FILE")
     aud.add_argument("--management-account", action="store_true")
+    aud.add_argument("--org", metavar="FILE", help="AWS Organizations export: the account's SCPs and RCPs apply")
     aud.add_argument("--workers", type=int, help="worker processes (default: one per CPU)")
     aud.add_argument("--json", action="store_true")
     aud.add_argument("--no-colour", action="store_true")

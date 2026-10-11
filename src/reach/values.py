@@ -48,6 +48,20 @@ BOOLEAN_KEYS = frozenset({"aws:multifactorauthpresent", "aws:securetransport", "
                           "aws:principalisawsservice"})  # fmt: skip
 
 
+# Services whose resources resource control policies (RCPs) apply to (AWS Organizations user guide, "List of AWS
+# services that support RCPs"). Only actions of these services are subject to an RCP.
+_RCP_SERVICE_LIST = """
+appstream dsql clouddirectory cloudfront cloudsearch logs networkmonitor cognito-identity cognito-idp comprehend
+comprehendmedical firehose dynamodb dax autoscaling ecr ecr-public gamelift inspector-scan kendra kinesisvideo
+memorydb aoss personalize polly s3 swf sqs textract timestream-influxdb transcribe translate workspaces appconfig
+autoscaling-plans budgets servicediscovery cloudtrail-data codeartifact codebuild codecommit codepipeline
+compute-optimizer cost-optimization-hub events fms fis health rolesanywhere kms opensearch pricing pca-connector-ad
+resource-groups secretsmanager sts signin support transfer notifications wafv2 xray
+"""
+RCP_SERVICES = frozenset(_RCP_SERVICE_LIST.split())
+RCP_EXEMPT_ACTIONS = frozenset({"kms:retiregrant"})
+
+
 def parse_bool(text: str) -> bool:
     """How the Bool operator reads a value, on either side: "true" in any case is true, anything else false.
 

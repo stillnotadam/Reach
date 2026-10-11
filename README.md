@@ -128,6 +128,12 @@ Alerts keep their identity when lines move, and no secret value is ever written 
 
 - Identity-based policies (inline, managed, group), permissions boundaries, session policies.
 - SCPs as layers (root → OU → account), each of which must allow; the management account and service-linked roles are exempt.
+- RCPs of the account that owns the resource, for the services that support them; resources in the management account,
+  service-linked roles and `kms:RetireGrant` are exempt. AWS managed KMS keys are exempt too, and an ARN does not say
+  which keys those are, so an RCP on KMS can block a witness but never proves DENIED on its own.
+- `--org org.json` loads an organization (`scripts/export_org.py`, read-only API calls): the SCP layers of the caller's
+  account, the RCPs of the resource's account, and `aws:PrincipalOrgID`, `aws:PrincipalOrgPaths`, `aws:ResourceOrgID`
+  and `aws:ResourceOrgPaths`, so data-perimeter policies are decided exactly.
 - Explicit Deny from every policy type.
 - Resource-based policies (bucket, key, trust policies): `Principal`/`NotPrincipal` matching, same-account grant paths
   (direct user, role and session grants; account grants delegate), required policies (role trust, KMS), and
@@ -154,7 +160,7 @@ Alerts keep their identity when lines move, and no secret value is ever written 
 
 These are always reported as `UNKNOWN` rather than guessed: set operators with numeric, date, IP or `Bool` operators,
 or with `IfExists`; multi-valued keys without a set operator; policy variables over IP, time or multi-valued keys or
-inside ARN operators; IPv6 networks; decimal or signed numbers; `StringEqualsIgnoreCase` and `Binary*`. RCPs are not part of the decision yet. Whether a `Principal: "*"` grant is
+inside ARN operators; IPv6 networks; decimal or signed numbers; `StringEqualsIgnoreCase` and `Binary*`. Whether a `Principal: "*"` grant is
 capped by a permissions boundary or session policy is reported as `UNKNOWN` until verified against AWS. See the [roadmap](ROADMAP.md).
 
 ## How Reach checks itself

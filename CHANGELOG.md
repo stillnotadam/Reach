@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- `aws:PrincipalIsAWSService` was free, so a policy conditioned on it could get an ALLOWED witness no IAM user or role
+  can produce. It is now pinned to `false`.
 - "Assume roles" in `reach agents --authz` asked `sts:AssumeRole` on `*` without any trust policy, so a principal
   that a role's trust policy names directly was reported DENIED. It is now decided against every role's trust policy.
 - Actions with many resource types were slow and erratic in Z3 (`ec2:RunInstances` on `*`: 2 to 60 s). They are now
@@ -15,6 +17,10 @@
 
 ### Added
 
+- AWS Organizations: `--org org.json` (from `scripts/export_org.py`, read-only) applies the SCP layers of the caller's
+  account and the RCPs of the resource's account, and pins `aws:PrincipalOrgID`/`aws:PrincipalOrgPaths` and
+  `aws:ResourceOrgID`/`aws:ResourceOrgPaths`. RCPs cover the 62 services that support them, with every documented
+  exemption. `examples/org/org.json` shows a data perimeter.
 - `reach audit`: every user and role in a snapshot against the high-impact questions, in parallel, with a matrix,
   per-question "who can", JSON and `--fail-on-allowed`. 5,000 principals in about 40 s on 32 threads
   (`docs/BENCHMARKS.md`, `scripts/synth_account.py`, `scripts/benchmark.py`).

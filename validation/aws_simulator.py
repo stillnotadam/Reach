@@ -148,6 +148,8 @@ def build_request(case: Case, action: str, resource: str, context: dict[str, str
         "aws:PrincipalArn": principal.arn,
         "aws:PrincipalAccount": principal.account,
         "aws:PrincipalType": principal_type(principal.arn),
+        # Reach's principals are IAM users and role sessions, never AWS service principals.
+        "aws:PrincipalIsAWSService": "false",
         # The simulator substitutes ${aws:username} only from a context entry.
         "aws:username": username(principal.arn),
     }

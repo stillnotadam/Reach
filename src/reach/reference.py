@@ -33,6 +33,8 @@ from .policy import Condition, Policy, Statement
 from .principals import Match, classify
 from .values import (
     IP_KEYS,
+    RCP_EXEMPT_ACTIONS,
+    RCP_SERVICES,
     TIME_KEYS,
     parse_bool,
     parse_int,
@@ -249,9 +251,12 @@ def evaluate(
         "aws:PrincipalArn": principal.arn,
         "aws:PrincipalAccount": principal.account,
         "aws:PrincipalType": principal_type(principal.arn),
+        # Reach's principals are IAM users and role sessions, never AWS service principals.
+        "aws:PrincipalIsAWSService": "false",
         "aws:username": username(principal.arn),
     }
     full.update({f"aws:PrincipalTag/{k}": v for k, v in principal.tags.items()})
+    full.update(env.org_context)
     full.update(context)
     req = Request(action, resource, full)
 
@@ -266,6 +271,17 @@ def evaluate(
             st for st in resource_policy.policy.statements if st.effect == "Deny" and classify(st, principal.arn)
         ]
         denied = _or([denied, *(_statement(st, req) for st in applicable)])
+    if env.rcps and not principal.is_service_linked:
+        service = action.split(":", 1)[0].lower()
+        if service in RCP_SERVICES and action.lower() not in RCP_EXEMPT_ACTIONS:
+            rcp = _or(
+                _statement(st, req)
+                for p in env.rcps
+                for st in p.statements
+                if st.effect == "Deny" and classify(st, principal.arn)
+            )
+            # AWS managed KMS keys are exempt, and an ARN does not say which keys those are.
+            denied = _or([denied, _and([rcp, None]) if service == "kms" else rcp])
 
     scps: list[Tri] = [_allows(layer, req) for _, layer in env.scp_layers] if scps_apply else []
     caps: list[Tri] = [_allows(boundary, req)] if boundary else []

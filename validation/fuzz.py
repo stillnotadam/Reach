@@ -213,6 +213,21 @@ def _resource_policy(rng: random.Random) -> ResourcePolicy:
     return ResourcePolicy(policy, ACCOUNT if rng.random() < 0.7 else "999999999999", required=rng.random() < 0.25)
 
 
+def _rcp(rng: random.Random) -> Policy:
+    """A resource control policy: Deny statements with Principal "*" (Allow exists only as RCPFullAWSAccess).
+
+    AWS accepts only RCPs that name a service in Action and do not use NotAction, so neither is generated.
+    """
+    statements = []
+    for _ in range(rng.randint(1, 2)):
+        stmt = {**_statement(rng, deny_bias=1.0), "Principal": "*"}
+        actions = stmt.pop("NotAction", None) or stmt.pop("Action")
+        actions = [actions] if isinstance(actions, str) else actions
+        stmt["Action"] = [a if a != "*" else "s3:*" for a in actions]
+        statements.append(stmt)
+    return parse_policy({"Version": "2012-10-17", "Statement": statements}, "rcp")
+
+
 def random_case(rng: random.Random) -> Case:
     principal = Principal(
         arn=rng.choice(PRINCIPALS),
@@ -224,6 +239,7 @@ def random_case(rng: random.Random) -> Case:
         scp_layers=[(f"layer-{i}", [_policy(rng, f"scp-{i}", 0.2)]) for i in range(rng.choice([0, 0, 1, 2]))],
         session_policies=[_policy(rng, "session", 0.1)] if rng.random() < 0.2 else [],
         management_account=rng.random() < 0.1,
+        rcps=[_rcp(rng)] if rng.random() < 0.2 else [],
     )
     return Case(principal, env, _resource_policy(rng) if rng.random() < 0.5 else None)
 
