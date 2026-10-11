@@ -43,6 +43,11 @@ def principal_type(arn: str) -> str:
     return "User" if ":user/" in arn else "AssumedRole"
 
 
+def username(arn: str) -> str | None:
+    """aws:username: an IAM user's name; not present for role sessions (IAM User Guide, policy variables)."""
+    return arn.rsplit("/", 1)[-1] if ":user/" in arn else None
+
+
 MAX_EPOCH = 253_402_300_799  # 9999-12-31T23:59:59Z
 
 # Representative address used when a witness needs "some IPv6 source".

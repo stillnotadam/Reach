@@ -244,7 +244,7 @@ def _string_match(kind: str, value: z3.SeqRef, values: tuple[str, ...]) -> z3.Bo
     return _any(terms)
 
 
-def _wrap(base: str, if_exists: bool, present: z3.BoolRef, matched: z3.BoolRef) -> z3.BoolRef:
+def wrap_presence(base: str, if_exists: bool, present: z3.BoolRef, matched: z3.BoolRef) -> z3.BoolRef:
     """Combine "the value matches" with presence, per the operator's polarity."""
     if is_negated(base):
         return z3.Or(z3.Not(present), z3.Not(matched))
@@ -260,7 +260,7 @@ def encode_condition(cond: Condition, ctx: Context, stmt: Statement) -> z3.BoolR
 
     if ":" in base:  # ForAnyValue: / ForAllValues: set operators
         return ctx.opaque(stmt, f"set operator {op} on {cond.key}")
-    if any("${" in v for v in cond.values):
+    if stmt.variables and any("${" in v for v in cond.values):
         return ctx.opaque(stmt, f"policy variable in {op} {cond.key}")
     if cond.key.lower() in MULTIVALUED_KEYS:
         return ctx.opaque(stmt, f"multi-valued key {cond.key}")
@@ -278,7 +278,7 @@ def encode_condition(cond: Condition, ctx: Context, stmt: Statement) -> z3.BoolR
         present, value = ctx.present(cond.key), ctx.string(cond.key)
         if base == "Bool":
             ctx.restrict(cond.key, ("true", "false"))
-        return _wrap(base, if_exists, present, _string_match(STRING_OPS[base], value, cond.values))
+        return wrap_presence(base, if_exists, present, _string_match(STRING_OPS[base], value, cond.values))
 
     if base in NUMERIC_OPS and kind == "string":
         bounds = [parse_int(v) for v in cond.values]
@@ -302,7 +302,7 @@ def encode_condition(cond: Condition, ctx: Context, stmt: Statement) -> z3.BoolR
             return ctx.opaque(stmt, f"unparsable date in {op} {cond.key}")
         present, t = ctx.present(cond.key), ctx.time(cond.key)
         matched = _any([_compare(DATE_OPS[base], t, m) for m in moments if m is not None])
-        return _wrap(base, if_exists, present, matched)
+        return wrap_presence(base, if_exists, present, matched)
 
     if base in IP_OPS and kind == "ip":
         networks = [parse_ipv4_network(v) for v in cond.values]
@@ -312,7 +312,7 @@ def encode_condition(cond: Condition, ctx: Context, stmt: Statement) -> z3.BoolR
         is_v4, address = ctx.ip(cond.key)
         valid = [n for n in networks if n is not None]
         matched = z3.And(is_v4, _any([(address & mask) == net for net, mask in valid]))
-        return _wrap(base, if_exists, present, matched)
+        return wrap_presence(base, if_exists, present, matched)
 
     return ctx.opaque(stmt, f"operator {op} on {cond.key} is not modelled yet")
 

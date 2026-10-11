@@ -52,11 +52,12 @@ from enum import Enum
 import z3
 
 from .catalog import Catalog, bundled, iam_glob_regex
-from .conditions import Context, encode_conditions
-from .patterns import PRINTABLE, ArnVar, has_wildcard, matches_any, sval
+from .conditions import MULTIVALUED_KEYS, STRING_OPS, Context, encode_conditions, key_kind, wrap_presence
+from .patterns import PRINTABLE, ArnVar, glob, has_wildcard, matches_any, sval
 from .policy import Policy, Statement
 from .principals import Match, classify
-from .values import IPV6_WITNESS, TIME_KEYS, principal_type, render_ipv4, render_time
+from .values import IPV6_WITNESS, TIME_KEYS, principal_type, render_ipv4, render_time, username
+from .variables import FREE, Pattern, SymbolicCondition, Var, resolve_statement
 
 SOLVER_TIMEOUT_MS = 30_000
 RECENT_EPOCH = 1_577_836_800  # 2020-01-01: witnesses prefer plausible clock values
@@ -153,6 +154,7 @@ class _Encoding:
             "aws:PrincipalArn": principal.arn,
             "aws:PrincipalAccount": principal.account,
             "aws:PrincipalType": principal_type(principal.arn),
+            "aws:username": username(principal.arn),
         }
         fixed.update({f"aws:PrincipalTag/{k}": v for k, v in principal.tags.items()})
         fixed.update(query.context)
@@ -263,7 +265,21 @@ class _Encoding:
             if not k.startswith("aws:") and key.kind == "string" and not self.catalog.supports_key(self.rep, key.name)
         ]
 
-    def _statement(self, stmt: Statement) -> z3.BoolRef:
+    def _lookup(self, key: str) -> str | None | object:
+        """A policy variable's value: pinned or principal-derived, None if absent, FREE if the request decides it."""
+        if key in MULTIVALUED_KEYS:
+            return FREE  # multi-valued keys cannot be variables; leave the element undecided
+        if key in self.ctx.fixed:
+            return self.ctx.fixed[key]
+        if any(key.startswith(p) for p in self.ctx.closed_prefixes):
+            return None
+        return FREE
+
+    def _statement(self, original: Statement) -> z3.BoolRef:
+        resolved = resolve_statement(original, self._lookup)
+        if resolved.statement is None:
+            return z3.BoolVal(False)  # a variable with no value leaves nothing to match
+        stmt = resolved.statement
         if self.rep is not None:
             if not _action_matches(stmt, self.rep):
                 return z3.BoolVal(False)
@@ -272,10 +288,85 @@ class _Encoding:
             action = matches_any(self.action, tuple(a.lower() for a in stmt.actions), arn=False)
             if stmt.not_actions:
                 action = z3.Not(action)
-        resource = self.arn.matches_any(stmt.resources)
+        # Entries whose variables the request decides are matched symbolically, against the key's own
+        # solver variable, so they stay exact.
+        matched = [
+            self.arn.matches_any(stmt.resources),
+            *(self._symbolic_resource(p) for p in resolved.symbolic_resources),
+        ]
+        resource = z3.Or(matched)
+        # Entries the model leaves undecided are opaques, placed so they occur positively
+        # (for NotResource, "does not match it" is the unknown).
+        undecided = [self.ctx.opaque(stmt, f"policy variable in Resource {r}") for r in resolved.undecided_resources]
         if stmt.not_resources:
-            resource = z3.Not(resource)
-        return z3.And(action, resource, encode_conditions(stmt, self.ctx))
+            resource = z3.And(z3.Not(resource), *undecided)
+        elif undecided:
+            resource = z3.Or(resource, *undecided)
+        conditions = [encode_conditions(stmt, self.ctx)]
+        conditions += [self._symbolic_condition(c, stmt) for c in resolved.symbolic_conditions]
+        conditions += [
+            self.ctx.opaque(stmt, f"policy variable in {c.operator} {c.key}") for c in resolved.undecided_conditions
+        ]
+        return z3.And(action, resource, *conditions)
+
+    # --- policy variables the request decides ----------------------------------------
+
+    def _var_value(self, var: Var) -> tuple[z3.BoolRef, z3.SeqRef]:
+        """(the variable has a value, that value): the key's own value, else its default."""
+        name = var.name or var.key
+        present, value = self.ctx.present(name), self.ctx.string(name)
+        if var.default is None:
+            return present, value
+        return z3.BoolVal(True), z3.If(present, value, sval(var.default))
+
+    def _var_regex(self, pattern: Pattern) -> tuple[z3.BoolRef, z3.ReRef]:
+        """(every variable has a value, the pattern as a regex with variable values literal)."""
+        defined: list[z3.BoolRef] = []
+        parts: list[z3.ReRef] = []
+        for t in pattern:
+            if isinstance(t, str):
+                parts.append(glob(t))
+            else:
+                ok, value = self._var_value(t)
+                defined.append(ok)
+                parts.append(z3.Re(value))
+        regex = parts[0] if len(parts) == 1 else z3.Concat(*parts)
+        return z3.And(defined) if defined else z3.BoolVal(True), regex
+
+    def _symbolic_resource(self, pattern: Pattern) -> z3.BoolRef:
+        """A Resource entry with free variables, all in the resource part (segment 6)."""
+        head = pattern[0]
+        assert isinstance(head, str)  # variables come only after the fifth colon
+        segments = head.split(":", 5)
+        prefix = ":".join(segments[:5]) + ":*"
+        defined, regex = self._var_regex((segments[5], *pattern[1:]) if segments[5] else pattern[1:])
+        return z3.And(self.arn.matches(prefix), defined, z3.InRe(self.arn.segments[5], regex))
+
+    def _symbolic_condition(self, cond: SymbolicCondition, stmt: Statement) -> z3.BoolRef:
+        base = cond.operator.removesuffix("IfExists")
+        kind = STRING_OPS.get(base)
+        if kind not in ("eq", "like") or key_kind(cond.key) != "string":
+            return self.ctx.opaque(stmt, f"policy variable in {cond.operator} {cond.key}")
+        present, value = self.ctx.present(cond.key), self.ctx.string(cond.key)
+        terms = []
+        for pattern in cond.values:
+            if kind == "like":
+                defined, regex = self._var_regex(pattern)
+                terms.append(z3.And(defined, z3.InRe(value, regex)))
+                continue
+            defined_parts: list[z3.BoolRef] = []
+            pieces: list[z3.SeqRef] = []
+            for t in pattern:
+                if isinstance(t, str):
+                    pieces.append(sval(t))
+                else:
+                    ok, v = self._var_value(t)
+                    defined_parts.append(ok)
+                    pieces.append(v)
+            whole = pieces[0] if len(pieces) == 1 else z3.Concat(*pieces)
+            terms.append(z3.And(*defined_parts, value == whole))
+        matched = z3.Or(terms) if len(terms) > 1 else terms[0]
+        return wrap_presence(base, cond.operator.endswith("IfExists"), present, matched)
 
     def _allows(self, policies: list[Policy]) -> z3.BoolRef:
         terms = [self._statement(s) for p in policies for s in p.statements if s.effect == "Allow"]

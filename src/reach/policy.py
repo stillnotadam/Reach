@@ -39,6 +39,9 @@ class Statement:
     # or (("*", "*"),). None when the statement has no Principal element.
     principals: tuple[tuple[str, str], ...] | None = None
     not_principal: bool = False
+    # Policy variables (${aws:username}, ...) are substituted only under Version 2012-10-17;
+    # in older or versionless policies they are literal text.
+    variables: bool = False
 
     @property
     def label(self) -> str:
@@ -114,7 +117,7 @@ def _parse_principals(stmt: dict[str, Any], where: str) -> tuple[tuple[tuple[str
     return tuple(out), negated
 
 
-def parse_statement(stmt: Any, source: str, index: int) -> Statement:
+def parse_statement(stmt: Any, source: str, index: int, variables: bool = False) -> Statement:
     where = f"{source} statement {index}"
     if not isinstance(stmt, dict):
         raise PolicyError(f"{where}: statement must be an object")
@@ -138,6 +141,7 @@ def parse_statement(stmt: Any, source: str, index: int) -> Statement:
         source=source,
         principals=principals,
         not_principal=not_principal,
+        variables=variables,
     )
 
 
@@ -162,7 +166,8 @@ def parse_policy(doc: Any, name: str) -> Policy:
     if raw is None:
         raise PolicyError(f"{name}: policy has no Statement")
     statements = raw if isinstance(raw, list) else [raw]
-    return Policy(name, tuple(parse_statement(s, name, i) for i, s in enumerate(statements)))
+    variables = body.get("Version") == "2012-10-17"
+    return Policy(name, tuple(parse_statement(s, name, i, variables) for i, s in enumerate(statements)))
 
 
 def load_policy_file(path: str, name: str | None = None) -> Policy:

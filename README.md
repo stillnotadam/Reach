@@ -124,13 +124,17 @@ Alerts keep their identity when lines move, and no secret value is ever written 
   fail, negated ones pass.
   - IP keys are 32-bit bitvectors, so CIDR matching is exact; time keys are epoch seconds, and `aws:CurrentTime` and
     `aws:EpochTime` share one clock, so a policy cannot be satisfied by two inconsistent times.
-- The principal's own context is pinned: `aws:PrincipalArn`, `aws:PrincipalAccount`, `aws:PrincipalTag/*`.
+- The principal's own context is pinned: `aws:PrincipalArn`, `aws:PrincipalAccount`, `aws:PrincipalTag/*`,
+  `aws:username`.
+- Policy variables (`${aws:username}`, `${aws:PrincipalTag/team, 'default'}`, `${*}`) in `Resource` and String
+  conditions, under `Version: 2012-10-17` only. Known values are substituted; a value the request decides is
+  substituted symbolically (the key's own solver variable inside a regular expression), so verdicts stay exact.
 - A catalogue of real IAM actions, built from AWS's Service Authorization Reference, so wildcard queries range over actions that exist.
 
 ## Not modelled yet
 
-These are always reported as `UNKNOWN` rather than guessed: `ForAnyValue`/`ForAllValues`; policy variables
-(`${aws:username}`); multi-valued keys; IPv6 networks; decimal or signed numbers; `StringEqualsIgnoreCase` and `Binary*`. RCPs are not part of the decision yet. Whether a `Principal: "*"` grant is
+These are always reported as `UNKNOWN` rather than guessed: `ForAnyValue`/`ForAllValues`; policy variables over IP,
+time or multi-valued keys or inside ARN operators; multi-valued keys; IPv6 networks; decimal or signed numbers; `StringEqualsIgnoreCase` and `Binary*`. RCPs are not part of the decision yet. Whether a `Principal: "*"` grant is
 capped by a permissions boundary or session policy is reported as `UNKNOWN` until verified against AWS. See the [roadmap](ROADMAP.md).
 
 ## How Reach checks itself

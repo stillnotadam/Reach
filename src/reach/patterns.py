@@ -41,6 +41,8 @@ def sval(text: str) -> z3.SeqRef:
     policy that literally contains one would be silently misread. Escaping
     every backslash first makes the literal exact.
     """
+    # ${*} and ${?} reach here as private-use markers (see variables.py): they are literal characters.
+    text = text.replace("\ue000", "*").replace("\ue001", "?")
     return z3.StringVal(text.replace(_BACKSLASH, _BACKSLASH + "u{5c}"))
 
 
@@ -142,4 +144,6 @@ class ArnVar:
 
     def matches_any(self, patterns: tuple[str, ...]) -> z3.BoolRef:
         terms = [self.matches(p) for p in patterns]
+        if not terms:
+            return z3.BoolVal(False)
         return z3.Or(terms) if len(terms) > 1 else terms[0]

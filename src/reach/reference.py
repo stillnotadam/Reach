@@ -31,7 +31,8 @@ from .conditions import MULTIVALUED_KEYS
 from .engine import Environment, Principal, ResourcePolicy
 from .policy import Condition, Policy, Statement
 from .principals import Match, classify
-from .values import IP_KEYS, TIME_KEYS, parse_int, parse_ip, parse_ipv4_network, parse_time, principal_type
+from .values import IP_KEYS, TIME_KEYS, parse_int, parse_ip, parse_ipv4_network, parse_time, principal_type, username
+from .variables import literal, resolve_statement
 
 Tri = bool | None  # True, False, or None for "depends on something unmodelled"
 
@@ -63,7 +64,7 @@ def _not(value: Tri) -> Tri:
 def _segment(pattern: str, any_colon: bool) -> str:
     star = ".*" if any_colon else "[^:]*"
     one = "." if any_colon else "[^:]"
-    return "".join(star if c == "*" else one if c == "?" else re.escape(c) for c in pattern)
+    return "".join(star if c == "*" else one if c == "?" else re.escape(literal(c)) for c in pattern)
 
 
 @lru_cache(maxsize=4096)
@@ -127,7 +128,7 @@ def _modelled(base: str, kind: str, values: tuple[str, ...]) -> bool:
 def _hit(base: str, value: str, values: tuple[str, ...]) -> Tri:
     """Does a present value match a modelled operator's value list (before negation)?"""
     if base in ("StringEquals", "StringNotEquals"):
-        return value in values
+        return value in {literal(v) for v in values}
     if base in ("StringLike", "StringNotLike"):
         return any(_glob(v).fullmatch(value) for v in values)
     if base == "Bool":
@@ -151,11 +152,12 @@ def _hit(base: str, value: str, values: tuple[str, ...]) -> Tri:
     return is_v4 and any((number & mask) == net for net, mask in networks)
 
 
-def _condition(cond: Condition, req: Request) -> Tri:
+def _condition(cond: Condition, req: Request, variables: bool) -> Tri:
     op = cond.operator
     if_exists = op.endswith("IfExists")
     base = op[: -len("IfExists")] if if_exists else op
-    if ":" in base or any("${" in v for v in cond.values) or cond.key.lower() in MULTIVALUED_KEYS or not cond.values:
+    unresolved = variables and any("${" in v for v in cond.values)
+    if ":" in base or unresolved or cond.key.lower() in MULTIVALUED_KEYS or not cond.values:
         return None
 
     k = cond.key.lower()
@@ -173,12 +175,21 @@ def _condition(cond: Condition, req: Request) -> Tri:
     return not hit if "Not" in base else hit
 
 
-def _statement(stmt: Statement, req: Request) -> Tri:
-    action = any(_glob(a, ignore_case=True).fullmatch(req.action) for a in stmt.actions) != stmt.not_actions
-    resource = any(_arn(r).fullmatch(req.resource) for r in stmt.resources) != stmt.not_resources
-    if not (action and resource):
+def _statement(original: Statement, req: Request) -> Tri:
+    # Every value is known here (a missing key is absent), so variables bind to plain text.
+    resolved = resolve_statement(original, req.context.get)
+    stmt = resolved.statement
+    if stmt is None:
         return False
-    return _and(_condition(c, req) for c in stmt.conditions)
+    # Nothing is symbolic here: the lookup above never answers FREE.
+    action = any(_glob(a, ignore_case=True).fullmatch(req.action) for a in stmt.actions) != stmt.not_actions
+    matched = any(_arn(r).fullmatch(req.resource) for r in stmt.resources)
+    undecided: Tri = None if resolved.undecided_resources else False  # whether an undecided entry matches
+    resource = _not(_or([matched, undecided])) if stmt.not_resources else _or([matched, undecided])
+    if not action or resource is False:
+        return False
+    conditions = [_condition(c, req, stmt.variables) for c in stmt.conditions]
+    return _and([resource, *conditions, *(None for _ in resolved.undecided_conditions)])
 
 
 def _allows(policies: list[Policy], req: Request) -> Tri:
@@ -197,12 +208,17 @@ def evaluate(
     env: Environment | None = None,
     resource_policy: ResourcePolicy | None = None,
 ) -> Tri:
+    """The request's decision: True (allowed), False (denied) or None (depends on something not modelled).
+
+    A key missing from `context` is absent.
+    """
     env = env or Environment()
     # Principal-derived keys first, so explicitly pinned keys override them, as in the engine.
     full: dict[str, str | None] = {
         "aws:PrincipalArn": principal.arn,
         "aws:PrincipalAccount": principal.account,
         "aws:PrincipalType": principal_type(principal.arn),
+        "aws:username": username(principal.arn),
     }
     full.update({f"aws:PrincipalTag/{k}": v for k, v in principal.tags.items()})
     full.update(context)

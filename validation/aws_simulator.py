@@ -38,7 +38,7 @@ from typing import Any, Protocol
 from reach.engine import Environment, Query, Verdict, decide
 from reach.policy import Policy, Statement
 from reach.principals import Match, classify
-from reach.values import IP_KEYS, TIME_KEYS, parse_int, principal_type
+from reach.values import IP_KEYS, TIME_KEYS, parse_int, principal_type, username
 
 from .fuzz import ACTIONS, RESOURCES, Case, random_case, random_context
 
@@ -84,7 +84,11 @@ def _statement_json(st: Statement) -> dict[str, Any]:
 
 
 def policy_json(policy: Policy) -> str:
-    return json.dumps({"Version": "2012-10-17", "Statement": [_statement_json(s) for s in policy.statements]})
+    doc: dict[str, Any] = {"Statement": [_statement_json(s) for s in policy.statements]}
+    # Keep the policy's language version: it decides whether ${...} is a variable or literal text.
+    if all(s.variables for s in policy.statements):
+        doc = {"Version": "2012-10-17", **doc}
+    return json.dumps(doc)
 
 
 # --- context entries --------------------------------------------------------------
@@ -142,6 +146,8 @@ def build_request(case: Case, action: str, resource: str, context: dict[str, str
         "aws:PrincipalArn": principal.arn,
         "aws:PrincipalAccount": principal.account,
         "aws:PrincipalType": principal_type(principal.arn),
+        # The simulator substitutes ${aws:username} only from a context entry.
+        "aws:username": username(principal.arn),
     }
     full.update({f"aws:PrincipalTag/{k}": v for k, v in principal.tags.items()})
     full.update(context)
@@ -203,6 +209,16 @@ def feasible_request(rng: random.Random) -> tuple[str, str, dict[str, str | None
     return action, resource, context
 
 
+def _uses_variables(case: Case) -> bool:
+    policies = [*case.principal.identity_policies, *([case.principal.boundary] if case.principal.boundary else [])]
+    policies += [case.resource_policy.policy] if case.resource_policy else []
+    return any(
+        st.variables and any("${" in t for t in (*st.resources, *(v for c in st.conditions for v in c.values)))
+        for p in policies
+        for st in p.statements
+    )
+
+
 def run(client: SimulatorClient, cases: int, seed: int) -> tuple[list[Comparison], Counter]:
     rng = random.Random(seed)  # noqa: S311 - reproducible test data, not cryptography
     stats: Counter = Counter()
@@ -235,6 +251,8 @@ def run(client: SimulatorClient, cases: int, seed: int) -> tuple[list[Comparison
             stats[f"Reach unknown, AWS says {aws}"] += 1
             continue
         stats["compared"] += 1
+        if _uses_variables(case):
+            stats["  of which use policy variables"] += 1
         flagged = "missing context" in detail
         if flagged:
             stats["  of which simulator flagged absent keys"] += 1

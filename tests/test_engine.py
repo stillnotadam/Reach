@@ -253,9 +253,93 @@ def test_unmodelled_condition_beside_unconditional_grant_still_proves():
     assert can([pol(numeric_allow(), allow("s3:ListBucket"))], "s3:ListBucket", "*").verdict is Verdict.ALLOWED
 
 
-def test_policy_variables_are_opaque():
-    p = [pol(allow("s3:*", f"{BUCKET}/*", Condition={"StringLike": {"s3:prefix": "${aws:username}/*"}}))]
-    assert can(p, "s3:ListBucket", f"{BUCKET}/x").verdict is Verdict.UNKNOWN
+# --- policy variables (IAM User Guide, "Policy variables") ---------------------------
+
+USER = "arn:aws:iam::123456789012:user/alice"
+HOME = allow("s3:GetObject", "arn:aws:s3:::corp/home/${aws:username}/*")
+
+
+def as_user(policies, action, resource, context=None, tags=None):
+    return decide(Principal(USER, policies, None, tags or {}), Query(action, resource, context or {}), catalog=None)
+
+
+def test_username_variable_scopes_a_user_to_their_own_prefix():
+    assert as_user([pol(HOME)], "s3:GetObject", "arn:aws:s3:::corp/home/alice/x").verdict is Verdict.ALLOWED
+    assert as_user([pol(HOME)], "s3:GetObject", "arn:aws:s3:::corp/home/bob/x").verdict is Verdict.DENIED
+    r = as_user([pol(HOME)], "s3:GetObject", "arn:aws:s3:::corp/home/*")
+    assert r.verdict is Verdict.ALLOWED and r.witness.resource.startswith("arn:aws:s3:::corp/home/alice/")
+
+
+def test_role_sessions_have_no_username_so_the_entry_matches_nothing():
+    # A regression: ${aws:username} used to be literal text, giving a witness containing "${aws:username}".
+    assert can([pol(HOME)], "s3:GetObject", "arn:aws:s3:::corp/home/*").verdict is Verdict.DENIED
+    cond = allow("s3:ListBucket", BUCKET, Condition={"StringLike": {"s3:prefix": "${aws:username}/*"}})
+    assert can([pol(cond)], "s3:ListBucket", BUCKET).verdict is Verdict.DENIED
+
+
+def test_principal_tag_variable_and_default_value():
+    team = allow("s3:*", "arn:aws:s3:::team-${aws:PrincipalTag/team, 'company-wide'}/*")
+    tagged = as_user([pol(team)], "s3:GetObject", "arn:aws:s3:::team-data/x", tags={"team": "data"})
+    assert tagged.verdict is Verdict.ALLOWED
+    assert as_user([pol(team)], "s3:GetObject", "arn:aws:s3:::team-web/x", tags={"team": "data"}).verdict is (
+        Verdict.DENIED
+    )
+    untagged = as_user([pol(team)], "s3:GetObject", "arn:aws:s3:::team-company-wide/x")
+    assert untagged.verdict is Verdict.ALLOWED
+
+
+def test_negated_operator_matches_a_null_variable():
+    # The documented example: deny unless the object's Team tag equals the caller's. An untagged caller is denied.
+    same_team = {"StringNotEquals": {"s3:ExistingObjectTag/Team": "${aws:PrincipalTag/Team}"}}
+    deny_other_teams = deny("s3:GetObject", f"{BUCKET}/*", Condition=same_team)
+    policies = [pol(allow("s3:*", f"{BUCKET}/*"), deny_other_teams)]
+    assert as_user(policies, "s3:GetObject", f"{BUCKET}/x").verdict is Verdict.DENIED
+    ok = as_user(policies, "s3:GetObject", f"{BUCKET}/x", {"s3:ExistingObjectTag/Team": "a"}, {"Team": "a"})
+    assert ok.verdict is Verdict.ALLOWED
+
+
+def test_variable_the_request_decides_is_solved_symbolically():
+    vpc = allow("s3:GetObject", "arn:aws:s3:::logs-${aws:SourceVpc}/*")
+    r = as_user([pol(vpc)], "s3:GetObject", "arn:aws:s3:::logs-vpc-1/x")
+    assert r.verdict is Verdict.ALLOWED and r.witness.context["aws:SourceVpc"] == "vpc-1"
+    other = as_user([pol(vpc)], "s3:GetObject", "arn:aws:s3:::logs-vpc-1/x", {"aws:SourceVpc": "vpc-2"})
+    assert other.verdict is Verdict.DENIED
+
+
+def test_variable_in_a_condition_value_is_solved_symbolically():
+    # s3:prefix must start with the requested region: ties two request keys together.
+    cond = allow("s3:ListBucket", BUCKET, Condition={"StringLike": {"s3:prefix": "${aws:RequestedRegion}/*"}})
+    r = as_user([pol(cond)], "s3:ListBucket", BUCKET)
+    assert r.verdict is Verdict.ALLOWED
+    assert r.witness.context["s3:prefix"].startswith(r.witness.context["aws:RequestedRegion"] + "/")
+    pinned = {"aws:RequestedRegion": "eu-west-1", "s3:prefix": "us-east-1/x"}
+    assert as_user([pol(cond)], "s3:ListBucket", BUCKET, pinned).verdict is Verdict.DENIED
+
+
+def test_variables_aws_does_not_substitute_stay_undecided():
+    for resource in ("arn:aws:s3:::ip-${aws:SourceIp}/*", "arn:aws:${aws:username}:::b/*"):
+        r = as_user([pol(allow("s3:GetObject", resource))], "s3:GetObject", "*")
+        assert r.verdict is Verdict.UNKNOWN, resource
+
+
+def test_escaped_wildcards_are_literal():
+    star = pol(allow("s3:GetObject", "arn:aws:s3:::b/${*}"))
+    assert as_user([star], "s3:GetObject", "arn:aws:s3:::b/*").verdict is Verdict.ALLOWED
+    assert as_user([star], "s3:GetObject", "arn:aws:s3:::b/x").verdict is Verdict.DENIED
+
+
+def test_variables_are_literal_without_the_2012_version():
+    old = parse_policy({"Statement": [HOME]}, "versionless")
+    assert as_user([old], "s3:GetObject", "arn:aws:s3:::corp/home/alice/x").verdict is Verdict.DENIED
+    r = as_user([old], "s3:GetObject", "arn:aws:s3:::corp/home/${aws:username}/x")
+    assert r.verdict is Verdict.ALLOWED
+
+
+def test_null_entry_in_not_resource_excludes_nothing():
+    stmt = {"Effect": "Allow", "Action": "s3:GetObject", "NotResource": "arn:aws:s3:::corp/home/${aws:username}/*"}
+    # For a role there is no username, so the NotResource entry matches nothing and every resource is allowed.
+    assert can([pol(stmt)], "s3:GetObject", "arn:aws:s3:::corp/home/dev/x").verdict is Verdict.ALLOWED
+    assert as_user([pol(stmt)], "s3:GetObject", "arn:aws:s3:::corp/home/alice/x").verdict is Verdict.DENIED
 
 
 def test_unresolved_policies_downgrade_any_verdict():

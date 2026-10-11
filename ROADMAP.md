@@ -29,7 +29,7 @@ Reach is built in phases. Each one ships something usable on its own.
 - [x] UNKNOWN verdicts list only the assumptions the witness actually depends on
 - [ ] IPv6 networks, decimal numbers, `StringEqualsIgnoreCase`
 - [ ] `ForAnyValue` / `ForAllValues` over multi-valued keys (bounded sequences)
-- [ ] Policy variables (`${aws:username}`, `${aws:PrincipalTag/…}`)
+- [x] Policy variables (`${aws:username}`, `${aws:PrincipalTag/…}`, defaults, `${*}`), symbolic when the request decides them
 - [x] Resource-based policies: principal matching, same-account grant paths, required policies (trust, KMS), cross-account
 - [x] Trust policies loaded from `get-account-authorization-details` for `sts:AssumeRole` queries
 - [ ] Verify against AWS: whether boundaries/session policies cap `Principal: "*"` grants; role-ARN vs session-ARN grants

@@ -41,6 +41,9 @@ ACTION_PATTERNS = [*ACTIONS, "*", "s3:*", "s3:Get*", "s3:*Object", "iam:*", "iam
 
 RESOURCES = [
     "arn:aws:s3:::pii/a.csv",
+    "arn:aws:s3:::pii/alice/notes",
+    "arn:aws:s3:::team-data/x",
+    "arn:aws:s3:::team-shared/x",
     "arn:aws:s3:::pii/sub/b",
     "arn:aws:s3:::logs/x",
     f"arn:aws:iam::{ACCOUNT}:role/app-1",
@@ -61,6 +64,17 @@ RESOURCE_PATTERNS = [
     "arn:aws:s3:::pii/?.csv",
     "arn:aws:s3*",
 ]
+# Patterns with policy variables: only in Resource elements, never in the query's own resource.
+VARIABLE_RESOURCES = [
+    "arn:aws:s3:::pii/${aws:username}/*",
+    "arn:aws:s3:::team-${aws:PrincipalTag/team}/*",
+    "arn:aws:s3:::team-${aws:PrincipalTag/team, 'shared'}/*",
+    "arn:aws:s3:::pii/${*}",
+    "arn:aws:s3:::pii/${aws:SourceVpc}/*",
+    "arn:aws:s3:::${s3:prefix}*",
+]
+VARIABLE_VALUES = ["${aws:username}", "${aws:PrincipalTag/team}", "${aws:PrincipalTag/team, 'web'}", "vpc-${*}",
+                   "home/${aws:username}*", "${aws:RequestedRegion}", "${aws:SourceVpc}"]  # fmt: skip
 
 # Context keys a request may carry, with values policies and requests draw from.
 KEYS = {
@@ -142,6 +156,8 @@ def _condition(rng: random.Random) -> tuple[str, str, list[str]]:
         values = rng.sample(LIKE_VALUES + KEYS[key], k=rng.randint(1, 2))
     else:
         values = rng.sample(KEYS[key], k=rng.randint(1, 2))
+    if rng.random() < 0.2:
+        values = [*values[:1], rng.choice(VARIABLE_VALUES)] if rng.random() < 0.5 else [rng.choice(VARIABLE_VALUES)]
     return op, key, values
 
 
@@ -150,6 +166,8 @@ def _statement(rng: random.Random, deny_bias: float) -> dict:
     actions = rng.sample(ACTION_PATTERNS, k=rng.randint(1, 2))
     stmt["NotAction" if rng.random() < 0.15 else "Action"] = actions if len(actions) > 1 else actions[0]
     resources = rng.sample(RESOURCE_PATTERNS, k=rng.randint(1, 2))
+    if rng.random() < 0.25:
+        resources[0] = rng.choice(VARIABLE_RESOURCES)
     stmt["NotResource" if rng.random() < 0.1 else "Resource"] = resources
     conditions: dict = {}
     for _ in range(rng.choice([0, 0, 1, 1, 2])):
@@ -162,7 +180,9 @@ def _statement(rng: random.Random, deny_bias: float) -> dict:
 
 def _policy(rng: random.Random, name: str, deny_bias: float = 0.25) -> Policy:
     statements = [_statement(rng, deny_bias) for _ in range(rng.randint(1, 3))]
-    return parse_policy({"Version": "2012-10-17", "Statement": statements}, name)
+    # Variables are substituted only under Version 2012-10-17; without it they are literal text.
+    doc = {"Version": "2012-10-17", "Statement": statements} if rng.random() < 0.85 else {"Statement": statements}
+    return parse_policy(doc, name)
 
 
 def _resource_policy(rng: random.Random) -> ResourcePolicy:

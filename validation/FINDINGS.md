@@ -1,8 +1,8 @@
 # Findings from differential testing against AWS
 
 Reach is compared against AWS's IAM policy simulator (`iam:SimulateCustomPolicy`) with
-`validation/aws_simulator.py`. Every finding below came from a disagreement between Reach and AWS. Each one is either a
-Reach bug that is now fixed and covered by a test, a documented limitation, or a quirk of the simulator itself.
+`validation/aws_simulator.py`. Findings 1 to 4 came from disagreements between Reach and AWS; finding 5 was found by
+hand and then checked against AWS. Each one is either a Reach bug that is now fixed and covered by a test, a documented limitation, or a quirk of the simulator itself.
 
 ## Reach bugs (fixed)
 
@@ -17,6 +17,24 @@ Reach bug that is now fixed and covered by a test, a documented limitation, or a
 - **Fix:** these keys are always present in Reach's model, and `aws:PrincipalType` is pinned from the principal
   (`User` / `AssumedRole`). Tests: `test_requested_region_is_never_absent`,
   `test_if_exists_deny_on_region_cannot_use_a_regionless_request`, `test_principal_type_is_pinned`.
+
+### 5. Policy variables in `Resource` were literal text
+
+- **Found:** by hand, writing `"Resource": "arn:aws:s3:::corp/home/${aws:username}/*"` for user `alice`. Reach proved
+  `s3:GetObject` on `corp/home/alice/x` DENIED, which AWS allows. Its witness for `corp/home/*` contained the text
+  `${aws:username}`. The differential fuzzer had never put a variable in a `Resource` element, and conditions with
+  variables were already reported UNKNOWN, so nothing caught it.
+- **Severity:** a false DENIED proof is the worst error Reach can make: it claims something is impossible.
+- **Fix:** variables are resolved per statement by one module shared by the engine and the reference evaluator,
+  following the IAM User Guide: only under `Version: 2012-10-17`; null keys make an entry match nothing (negated
+  operators match); `${key, 'default'}`; `${*}`, `${?}`, `${$}` as literal characters. Known values (`aws:username`,
+  principal tags, pinned keys) are substituted as text. A key the request decides is substituted symbolically, with
+  the key's own solver variable inside a Z3 regular expression, so the verdict stays exact. Variables AWS does not
+  substitute (before the fifth colon of an ARN, over IP, time or multi-valued keys, in ARN operators) stay UNKNOWN.
+- **Checked:** the fuzzer now generates variables in 31% of statements (with and without `Version`); 4,000 cases,
+  0 failures. Against the simulator: 652 compared cases, 378 of them with variables, 0 disagreements.
+  Tests: `test_username_variable_scopes_a_user_to_their_own_prefix` and the other policy-variable tests in
+  `tests/test_engine.py`.
 
 ## Modelling gaps (fixed with AWS's Service Authorization Reference)
 
@@ -88,3 +106,4 @@ Reach bug that is now fixed and covered by a test, a documented limitation, or a
 | 2 | 2000 | 1150 | 0 | interim: account-principal grants reported UNKNOWN (AWS: 21 allowed, 28 denied) |
 | 3 | 1000 | 567 | 0 | with the bundled reference data; 18 UNKNOWN (AWS: 6 allowed, 12 denied) |
 | 2 | 2000 | 1104 | 0 | delegation restored after the live test; 78 account-principal cases skipped (finding 4) |
+| 11, 12, 13 | 400 each | 652 | 0 | policy variables (finding 5): 378 compared cases use them |

@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Policy variables in `Resource` elements were read as literal text, so Reach could prove DENIED a request AWS allows
+  (`validation/FINDINGS.md`, finding 5).
+
+### Added
+
+- Policy variables, exact: `${aws:username}`, principal tags, pinned keys, `${key, 'default'}`, `${*}`/`${?}`/`${$}`,
+  and symbolic substitution for values the request decides. Only under `Version: 2012-10-17`, as in AWS.
+- `reach agents --sarif FILE` (SARIF 2.1.0 for GitHub code scanning) and `--fail-on critical|high`.
+- A GitHub Action (`uses: ctrl-adam/Reach@v0.2.0`) that runs Reach and uploads the report to code scanning.
+
 ## 0.1.0 (2026-10-11)
 
 First release.
