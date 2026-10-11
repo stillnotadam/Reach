@@ -104,9 +104,47 @@ def classify_tool(tool: Tool) -> tuple[frozenset[str], str] | None:
     return None
 
 
+def _blanket(rules: list[str], *tools: str) -> bool:
+    """Every named tool is covered by a rule for the whole tool (not just some domains or commands)."""
+    norm = {r.strip().lower() for r in rules}
+    return all(t.lower() in norm or f"{t.lower()}(*)" in norm for t in tools)
+
+
 def _denied(agent: Agent, *tools: str) -> bool:
-    rules = {r.strip().lower() for r in agent.denied}
-    return all(t.lower() in rules or f"{t.lower()}(*)" in rules for t in tools)
+    return _blanket(agent.denied, *tools)
+
+
+def _mcp_rules(rules: list[str], server: str) -> tuple[bool, list[str]]:
+    """(the whole server is covered, the individual tools covered) by Claude Code rules like mcp__github__*."""
+    prefix = f"mcp__{server.lower()}"
+    whole, tools = False, []
+    for rule in rules:
+        r = rule.strip().lower()
+        if r in (prefix, f"{prefix}__*", f"{prefix}(*)"):
+            whole = True
+        elif r.startswith(prefix + "__"):
+            tools.append(rule.strip()[len(prefix) + 2 :])
+    return whole, tools
+
+
+# Shell commands that, pre-approved, need no human to send data out or to read credentials.
+_NETWORK_COMMANDS = frozenset({
+    "curl", "wget", "nc", "ncat", "netcat", "ssh", "scp", "sftp", "rsync", "ftp", "telnet", "http", "https", "xh",
+    "gh", "invoke-webrequest", "iwr", "invoke-restmethod", "irm",
+})  # fmt: skip
+_CREDENTIAL_COMMANDS = frozenset({
+    "aws", "gcloud", "az", "kubectl", "cat", "type", "env", "printenv", "set", "get-content", "gc",
+})  # fmt: skip
+
+
+def _preapproved_commands(agent: Agent) -> set[str]:
+    """First words of the Bash rules that run without approval, e.g. Bash(curl:*) and Bash(curl *) give curl."""
+    out = set()
+    for rule in agent.allowed:
+        m = re.match(r"\s*bash\(\s*([^\s:*)]+)", rule, re.I)
+        if m:
+            out.add(m.group(1).lower().rsplit("/", 1)[-1])
+    return out
 
 
 def assess(agent: Agent, inv: Inventory, capabilities: dict[str, list[Capability]] | None = None) -> Assessment:
@@ -117,24 +155,36 @@ def assess(agent: Agent, inv: Inventory, capabilities: dict[str, list[Capability
 
     approval = agent.shell_mode == "approval"
     # Built-in tools of local coding agents. Claude Code's WebFetch/WebSearch ask before first use per domain
-    # by default, so they count as gated unless the agent runs unrestricted.
+    # by default, so they count as gated unless the agent runs unrestricted or the settings pre-approve WebFetch.
     if agent.kind == "claude-code" and not _denied(agent, "WebFetch"):
-        gated = agent.shell_mode != "unrestricted"
-        add(UNTRUSTED, "WebFetch: web pages anyone can publish", gated, _FIX["web"])
-        add(EXFIL, "WebFetch: data can leave in a request URL", gated, _FIX["web"])
+        preapproved = _blanket(agent.allowed, "WebFetch")
+        gated = agent.shell_mode != "unrestricted" and not preapproved
+        note = " (pre-approved in settings)" if preapproved else ""
+        add(UNTRUSTED, f"WebFetch: web pages anyone can publish{note}", gated, _FIX["web"])
+        add(EXFIL, f"WebFetch: data can leave in a request URL{note}", gated, _FIX["web"])
     if agent.kind in ("cursor", "vscode", "windsurf"):
         add(UNTRUSTED, "built-in web and repository context (assumed; not configurable from files Reach reads)", True)
 
     if agent.shell:
-        add(EXFIL, f"shell ({agent.shell_mode}): network commands such as curl", approval, _FIX["shell"])
+        # In approval mode a human approves each command, except the ones the settings pre-approve.
+        commands = _preapproved_commands(agent) if approval else set()
+        network = sorted(commands & _NETWORK_COMMANDS)
+        readers = sorted(commands & _CREDENTIAL_COMMANDS)
+        if network:
+            add(EXFIL, f"shell: {', '.join(network)} pre-approved, so data can leave with no human check", False,
+                f"remove the pre-approved Bash rules for {', '.join(network)}")  # fmt: skip
+        else:
+            add(EXFIL, f"shell ({agent.shell_mode}): network commands such as curl", approval, _FIX["shell"])
         ambient = inv.ambient
+        gated = approval and not readers
+        how = f" ({', '.join(readers)} pre-approved)" if readers else ""
         if ambient:
             names = ", ".join(sorted({f"{c.kind} {c.name}" for c in ambient})[:6])
-            add(PRIVATE, f"ambient credentials readable from the shell: {names}", approval, _FIX["ambient"])
+            add(PRIVATE, f"ambient credentials readable from the shell{how}: {names}", gated, _FIX["ambient"])
         for profile, caps in (capabilities or {}).items():
             proven = [c.label for c in caps if c.verdict is Verdict.ALLOWED]
             if proven:
-                add(PRIVATE, f"AWS profile {profile} can (proven): {', '.join(proven)}", approval, _FIX["ambient"])
+                add(PRIVATE, f"AWS profile {profile} can (proven){how}: {', '.join(proven)}", gated, _FIX["ambient"])
 
     if agent.kind == "ci":
         if agent.triggers:
@@ -157,13 +207,22 @@ def assess(agent: Agent, inv: Inventory, capabilities: dict[str, list[Capability
             add(EXFIL, "shell on the runner with network access", False, "remove Bash from the agent's allowed tools")
 
     for tool in agent.tools:
+        if _mcp_rules(agent.denied, tool.name)[0]:
+            continue  # every tool of this server is denied, so it provides nothing
         found = classify_tool(tool)
         if found is None:
             out.unclassified.append(tool.name)
             continue
         legs, what = found
-        # MCP tool calls ask for approval in local agents unless the agent runs unrestricted.
-        gated = agent.local and agent.shell_mode != "unrestricted"
+        # MCP tool calls ask for approval in local agents unless the agent runs unrestricted or the settings
+        # pre-approve the whole server. Pre-approving single tools is reported but keeps the leg gated:
+        # Reach does not know which leg each individual tool provides.
+        whole, some = _mcp_rules(agent.allowed, tool.name)
+        gated = agent.local and agent.shell_mode != "unrestricted" and not whole
+        if whole:
+            what += " (every tool pre-approved in settings)"
+        elif some:
+            what += f" ({len(some)} tool(s) pre-approved, e.g. {some[0]})"
         for kind in legs:
             add(kind, f"MCP server {tool.name}: {what}", gated, f"remove or narrow the {tool.name} MCP server")
         if tool.credentials and PRIVATE not in legs:

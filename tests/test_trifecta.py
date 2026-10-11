@@ -15,8 +15,9 @@ def inventory(*agents: Agent, ambient=AMBIENT) -> Inventory:
     return Inventory(agents=list(agents), ambient=list(ambient))
 
 
-def claude(mode="approval", tools=(), denied=()) -> Agent:
-    return Agent("Claude Code", "~/.claude.json", mode, list(tools), kind="claude-code", denied=list(denied))
+def claude(mode="approval", tools=(), denied=(), allowed=()) -> Agent:
+    return Agent("Claude Code", "~/.claude.json", mode, list(tools), kind="claude-code", denied=list(denied),
+                 allowed=list(allowed))  # fmt: skip
 
 
 GITHUB = Tool("github", "stdio", "npx -y @modelcontextprotocol/server-github",
@@ -76,6 +77,57 @@ def test_unknown_tools_are_reported_not_guessed():
     assert classify_tool(weird) is None
     a = assess(claude(tools=[weird]), inventory())
     assert a.unclassified == ["acme-internal"]
+
+
+def test_preapproved_curl_makes_exfiltration_ungated():
+    a = assess(claude(allowed=["Bash(curl:*)"]), inventory())
+    exfil = [leg for leg in a.legs[EXFIL] if leg.source.startswith("shell")]
+    assert len(exfil) == 1 and not exfil[0].gated and "curl" in exfil[0].fix
+    assert a.severity == "high"  # WebFetch and ambient reads still need approval
+
+
+def test_preapprovals_on_every_leg_make_a_default_agent_critical():
+    allowed = ["WebFetch", "Bash(curl *)", "Bash(aws:*)"]
+    a = assess(claude(allowed=allowed), inventory())
+    assert a.severity == "critical"
+    assert any("aws pre-approved" in leg.source and not leg.gated for leg in a.legs[PRIVATE])
+
+
+def test_domain_scoped_webfetch_rule_is_not_a_blanket_preapproval():
+    a = assess(claude(allowed=["WebFetch(domain:docs.python.org)"]), inventory())
+    assert all(leg.gated for leg in a.legs[UNTRUSTED])
+
+
+def test_harmless_preapproved_commands_keep_the_shell_gated():
+    a = assess(claude(allowed=["Bash(npm test:*)", "Bash(git status)"]), inventory())
+    assert all(leg.gated for legs in a.legs.values() for leg in legs)
+
+
+def test_preapproving_a_whole_mcp_server_removes_its_gate():
+    a = assess(claude("denied", tools=[GITHUB], denied=["WebFetch"], allowed=["mcp__github"]), inventory())
+    assert a.severity == "critical"
+    assert "every tool pre-approved" in a.legs[UNTRUSTED][0].source
+
+
+def test_preapproving_single_mcp_tools_is_reported_but_stays_gated():
+    a = assess(claude("denied", tools=[GITHUB], denied=["WebFetch"], allowed=["mcp__github__get_issue"]),
+               inventory())  # fmt: skip
+    assert a.severity == "high"
+    assert "e.g. get_issue" in a.legs[UNTRUSTED][0].source
+
+
+def test_denying_a_whole_mcp_server_removes_it():
+    a = assess(claude("denied", tools=[GITHUB], denied=["WebFetch", "mcp__github__*"]), inventory())
+    assert not any(a.legs.values())
+
+
+def test_preapprovals_are_read_from_settings_files(tmp_path):
+    settings = tmp_path / "p" / ".claude" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text(json.dumps({"permissions": {"allow": ["Bash(curl:*)", "mcp__github"]}}), encoding="utf-8")
+    inv = discover(home=tmp_path / "h", project=tmp_path / "p", environ={}, appdata=tmp_path / "a")
+    agent = next(a for a in inv.agents if a.kind == "claude-code")
+    assert agent.allowed == ["Bash(curl:*)", "mcp__github"]
 
 
 TRIAGE = """

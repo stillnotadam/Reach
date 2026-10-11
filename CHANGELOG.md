@@ -34,6 +34,10 @@ First release.
 - `--resolve` maps AWS profiles to principals. `--authz` evaluates high-impact capabilities for each principal.
 - Lethal-trifecta analysis per agent (untrusted input, private data, exfiltration), with a severity and the cheapest leg
   to break.
+- Reads Claude Code's `allow` rules:
+  - Pre-approved `WebFetch`, network commands (`Bash(curl:*)`) or credential readers (`Bash(aws:*)`) remove the human
+    gate, so an approval-mode agent can still be CRITICAL.
+  - A pre-approved MCP server (`mcp__github`) is ungated. A server denied as a whole (`mcp__github__*`) provides no leg.
 
 ### Validation
 
