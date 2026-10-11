@@ -59,9 +59,12 @@ Reach is built in phases. Each one ships something usable on its own.
 - [x] Label capabilities as untrusted input, private data or exfiltration, per agent, with the source of each leg
 - [x] Severity (critical: every leg has an ungated way; high: a human approval stands in the way) and the cheapest leg to break
 - [ ] Injected text in files the agent reads (repositories, dependencies) as untrusted input
-- [ ] Per-tool pre-approvals in agent settings (an approved MCP tool or `Bash(curl:*)` is an ungated leg)
-- [ ] SARIF, BloodHound OpenGraph and HTML output
+- [x] Pre-approvals in agent settings (`WebFetch`, `Bash(curl:*)`, `Bash(aws:*)`, a whole MCP server) are ungated legs
+- [x] SARIF 2.1.0 output and a GitHub Action that uploads it to code scanning
+- [ ] BloodHound OpenGraph and HTML output
 
 ## Phase 5: launch
 
-- [ ] `reach-goat` vulnerable lab, research write-up, talks
+- [x] `reach-goat` vulnerable lab
+- [x] v0.1.0 on PyPI via Trusted Publishing, with signed attestations
+- [ ] Research write-up, talks

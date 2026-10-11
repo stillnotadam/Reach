@@ -1,0 +1,52 @@
+name: Reach
+description: "Find AI agents in a repository, the credentials they hold, and lethal-trifecta paths; report them to code scanning."
+author: ctrl-adam
+branding:
+  icon: shield
+  color: red
+inputs:
+  path:
+    description: Project directory to scan.
+    default: "."
+  fail-on:
+    description: "Fail the step if any agent's trifecta is at least this severe (critical or high). Empty never fails."
+    default: ""
+  sarif-file:
+    description: Where to write the SARIF report.
+    default: reach.sarif
+  upload:
+    description: "Upload the SARIF report to GitHub code scanning (needs `security-events: write`)."
+    default: "true"
+outputs:
+  sarif-file:
+    description: Path of the SARIF report.
+    value: ${{ inputs.sarif-file }}
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v7
+      with:
+        python-version: "3.13"
+    # Install Reach from this action's own checkout, so the version always matches the ref you pinned.
+    - shell: bash
+      run: python -m pip install --quiet "$GITHUB_ACTION_PATH"
+    # An empty --home: on a runner only the repository is in scope, not the runner's own home or environment.
+    - shell: bash
+      env:
+        SCAN_PATH: ${{ inputs.path }}
+        SARIF_FILE: ${{ inputs.sarif-file }}
+        FAIL_ON: ${{ inputs.fail-on }}
+      run: |
+        home="$(mktemp -d)"
+        set +e
+        reach agents --no-colour --home "$home" --project "$SCAN_PATH" --sarif "$SARIF_FILE" ${FAIL_ON:+--fail-on "$FAIL_ON"}
+        status=$?
+        set -e
+        echo "REACH_STATUS=$status" >> "$GITHUB_ENV"
+    - if: ${{ inputs.upload == 'true' }}
+      uses: github/codeql-action/upload-sarif@v4
+      with:
+        sarif_file: ${{ inputs.sarif-file }}
+        category: reach
+    - shell: bash
+      run: exit "$REACH_STATUS"

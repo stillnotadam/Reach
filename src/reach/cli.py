@@ -19,6 +19,7 @@ from .catalog import Catalog, bundled
 from .engine import Environment, Principal, Query, ResourcePolicy, Result, Verdict, decide
 from .loaders import AuthorizationDetails, trust_policy
 from .policy import PolicyError, load_policy_file
+from .sarif import to_sarif
 from .trifecta import LEGS, Assessment, assess_all
 
 ADHOC_ARN = "arn:aws:iam::111122223333:role/reach-adhoc"
@@ -261,6 +262,12 @@ def cmd_agents(args: argparse.Namespace) -> int:
         if args.resolve:
             print(_render_reach(resolutions, results, colour))
         print(_render_trifecta(assessments, colour))
+    if args.sarif:
+        project = Path(args.project) if args.project else None
+        Path(args.sarif).write_text(json.dumps(to_sarif(inv, assessments, project), indent=2), encoding="utf-8")
+    failing = {"critical": ("critical",), "high": ("critical", "high")}.get(args.fail_on or "", ())
+    if any(a.severity in failing for a in assessments):
+        return 1
     return 1 if args.fail_on_hardcoded and inv.hardcoded else 0
 
 
@@ -315,6 +322,10 @@ def build_parser() -> argparse.ArgumentParser:
     agents.add_argument("--json", action="store_true")
     agents.add_argument("--no-colour", action="store_true")
     agents.add_argument("--fail-on-hardcoded", action="store_true", help="exit 1 if a secret is hardcoded in a config")
+    agents.add_argument(
+        "--fail-on", choices=["critical", "high"], help="exit 1 if any agent's trifecta is at least this severe"
+    )
+    agents.add_argument("--sarif", metavar="FILE", help="also write findings as SARIF 2.1.0 (GitHub code scanning)")
     agents.add_argument(
         "--resolve",
         action="store_true",

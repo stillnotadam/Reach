@@ -49,3 +49,29 @@ jobs:
           python-version: "3.13"
       - run: pip install -e .
       - run: python -m validation.fuzz --cases 400 --seed ${{ github.run_number }}
+
+  action:
+    # The published GitHub Action, run from this checkout against the vulnerable lab.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - id: reach
+        uses: ./
+        with:
+          path: examples/reach-goat
+          upload: "false"
+      - name: The report holds the expected findings
+        shell: bash
+        env:
+          SARIF: ${{ steps.reach.outputs.sarif-file }}
+        run: |
+          python - <<'PY'
+          import json, os
+          results = json.load(open(os.environ["SARIF"]))["runs"][0]["results"]
+          rules = sorted({r["ruleId"] for r in results})
+          print(len(results), "results:", rules)
+          assert {"REACH001", "REACH002", "REACH003"} <= set(rules), rules
+          assert all(r["locations"][0]["physicalLocation"]["artifactLocation"].get("uriBaseId") == "%SRCROOT%" for r in results)
+          PY

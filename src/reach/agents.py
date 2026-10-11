@@ -137,6 +137,7 @@ class Agent:
     kind: str = ""  # claude-code | claude-desktop | cursor | vscode | windsurf | ci
     denied: list[str] = field(default_factory=list)  # tools the agent's own settings deny (e.g. WebFetch)
     allowed: list[str] = field(default_factory=list)  # tool rules that run without approval (e.g. Bash(curl:*))
+    settings: list[str] = field(default_factory=list)  # settings files the mode and rules were read from
     # CI agents only: untrusted triggers, the `if:` gate on them, and whether the token can write.
     triggers: list[str] = field(default_factory=list)
     gate: str = ""
@@ -308,10 +309,11 @@ def _add(
     kind: str = "",
     denied: list[str] | None = None,
     allowed: list[str] | None = None,
+    settings: list[str] | None = None,
 ) -> None:
     inv.agents.append(
         Agent(name, str(path), mode, tools, list(findings or []), kind=kind, denied=list(denied or []),
-              allowed=list(allowed or []))
+              allowed=list(allowed or []), settings=list(settings or []))
     )  # fmt: skip
 
 
@@ -369,6 +371,10 @@ def _claude_settings(inv: Inventory, *dirs: Path) -> list[dict[str, Any]]:
     return out
 
 
+def _settings_files(*dirs: Path) -> list[str]:
+    return [str(d / n) for d in dirs for n in ("settings.json", "settings.local.json") if (d / n).is_file()]
+
+
 def discover_agents(inv: Inventory, home: Path, appdata: Path, project: Path | None) -> None:
     # Claude Code: user-level servers, per-project servers kept in ~/.claude.json, and a project's .mcp.json.
     user_settings = _claude_settings(inv, home / ".claude")
@@ -378,14 +384,16 @@ def discover_agents(inv: Inventory, home: Path, appdata: Path, project: Path | N
         mode, findings = claude_code_mode(user_settings)
         tools = _servers(data.get("mcpServers"), str(home / ".claude.json"))
         _add(inv, "Claude Code (user)", home / ".claude.json", mode, tools, findings, "claude-code",
-             claude_code_denied(user_settings), claude_code_rules(user_settings, "allow"))  # fmt: skip
+             claude_code_denied(user_settings), claude_code_rules(user_settings, "allow"),
+             _settings_files(home / ".claude"))  # fmt: skip
         for proj, cfg in (data.get("projects") or {}).items():
             if isinstance(cfg, dict) and cfg.get("mcpServers"):
                 settings = user_settings + _claude_settings(inv, Path(proj) / ".claude")
                 mode, findings = claude_code_mode(settings)
                 tools = _servers(cfg["mcpServers"], str(home / ".claude.json"))
                 _add(inv, f"Claude Code ({proj})", home / ".claude.json", mode, tools, findings, "claude-code",
-                     claude_code_denied(settings), claude_code_rules(settings, "allow"))  # fmt: skip
+                     claude_code_denied(settings), claude_code_rules(settings, "allow"),
+                     _settings_files(home / ".claude", Path(proj) / ".claude"))  # fmt: skip
     for desktop in (
         appdata / "Claude",
         home / "Library" / "Application Support" / "Claude",
@@ -428,7 +436,8 @@ def discover_agents(inv: Inventory, home: Path, appdata: Path, project: Path | N
             tools = _servers(data.get("mcpServers"), str(project / ".mcp.json"))
             settings = user_settings + project_settings
             _add(inv, "Claude Code (project)", project / ".mcp.json", mode, tools, findings, "claude-code",
-                 claude_code_denied(settings), claude_code_rules(settings, "allow"))  # fmt: skip
+                 claude_code_denied(settings), claude_code_rules(settings, "allow"),
+                 _settings_files(home / ".claude", project / ".claude"))  # fmt: skip
         for rel, agent, key in ((".cursor/mcp.json", "Cursor (project)", "mcpServers"),
                                 (".vscode/mcp.json", "VS Code (project)", "servers")):  # fmt: skip
             path = project / rel

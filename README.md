@@ -81,8 +81,34 @@ handed, ambient credentials when it has a shell, proven AWS capabilities from `-
 triggers, `if:` gates, token permissions and secrets. All three legs with an ungated way each is **critical**; all
 three behind a human approval is **high**. Reach names the cheapest leg to break.
 
-Not covered yet: injected text inside files the agent reads (a cloned repository, a dependency), and tool calls
-pre-approved per tool in an agent's settings.
+Pre-approvals count: a Claude Code `allow` rule for `WebFetch`, a network command (`Bash(curl:*)`), a credential reader
+(`Bash(aws:*)`) or a whole MCP server (`mcp__github`) removes the human gate on that leg. Not covered yet: injected text
+inside files the agent reads (a cloned repository, a dependency).
+
+### In CI: GitHub code scanning
+
+```yaml
+permissions:
+  contents: read
+  security-events: write  # to upload the report
+steps:
+  - uses: actions/checkout@v5
+  - uses: ctrl-adam/Reach@v0.2.0
+    with:
+      fail-on: critical  # optional: fail the job on a critical trifecta
+```
+
+The action writes a SARIF 2.1.0 report and uploads it to code scanning, so findings show up in the Security tab and on
+pull requests, each pointing at the line that causes it. Locally: `reach agents --project . --sarif reach.sarif`.
+
+| Rule | Finding | Level |
+|------|---------|-------|
+| REACH001 | Lethal trifecta in one agent | error (critical) or warning (high) |
+| REACH002 | Secret hardcoded in an agent or MCP config | error |
+| REACH003 | Agent setting that removes a human check | warning |
+| REACH004 | Secret in a `.env` file committed to git | error |
+
+Alerts keep their identity when lines move, and no secret value is ever written to the report.
 
 ## What is modelled
 
