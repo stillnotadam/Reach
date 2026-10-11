@@ -56,8 +56,10 @@ Reach is built in phases. Each one ships something usable on its own.
 
 ## Phase 4: lethal-trifecta paths, then v1.0
 
-- [ ] Label capabilities as private data, untrusted input or exfiltration channel
-- [ ] Attack-path search with the smallest fix that breaks each path
+- [x] Label capabilities as untrusted input, private data or exfiltration, per agent, with the source of each leg
+- [x] Severity (critical: every leg has an ungated way; high: a human approval stands in the way) and the cheapest leg to break
+- [ ] Injected text in files the agent reads (repositories, dependencies) as untrusted input
+- [ ] Per-tool pre-approvals in agent settings (an approved MCP tool or `Bash(curl:*)` is an ungated leg)
 - [ ] SARIF, BloodHound OpenGraph and HTML output
 
 ## Phase 5: launch

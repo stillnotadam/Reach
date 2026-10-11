@@ -48,6 +48,19 @@ committed in `.env` files, and never prints a secret value. With `--resolve` it 
 in to find its principal (read-only `sts:GetCallerIdentity`). With `--authz` it then asks the engine what that principal
 can do: read secrets, decrypt with KMS, read or write S3, modify IAM, assume roles, start compute.
 
+### Lethal trifecta
+
+For every agent, Reach then checks for Simon Willison's *lethal trifecta*: **untrusted input** (text an attacker can
+write reaches the agent), **private data** (it can read something sensitive) and an **exfiltration channel** (it can
+send data out). Each leg is derived from evidence: built-in tools and the agent's own denied tools, its shell mode, its
+MCP servers (classified by a small documented catalogue; unknown servers are reported, not guessed), credentials it is
+handed, ambient credentials when it has a shell, proven AWS capabilities from `--authz`, and for CI agents their
+triggers, `if:` gates, token permissions and secrets. All three legs with an ungated way each is **critical**; all
+three behind a human approval is **high**. Reach names the cheapest leg to break.
+
+Not covered yet: injected text inside files the agent reads (a cloned repository, a dependency), and tool calls
+pre-approved per tool in an agent's settings.
+
 ## What is modelled
 
 - Identity-based policies (inline, managed, group), permissions boundaries, session policies.

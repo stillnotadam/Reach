@@ -134,6 +134,12 @@ class Agent:
     findings: list[str] = field(default_factory=list)
     local: bool = True  # runs on this machine; CI agents run on a runner and cannot read local files
     credentials: list[Credential] = field(default_factory=list)  # handed to the agent itself (CI secrets, tokens)
+    kind: str = ""  # claude-code | claude-desktop | cursor | vscode | windsurf | ci
+    denied: list[str] = field(default_factory=list)  # tools the agent's own settings deny (e.g. WebFetch)
+    # CI agents only: untrusted triggers, the `if:` gate on them, and whether the token can write.
+    triggers: list[str] = field(default_factory=list)
+    gate: str = ""
+    can_write: bool = False
 
     @property
     def shell(self) -> bool:
@@ -290,9 +296,16 @@ def _read(path: Path, inv: Inventory) -> Any:
 
 
 def _add(
-    inv: Inventory, name: str, path: Path, mode: str, tools: list[Tool], findings: list[str] | None = None
+    inv: Inventory,
+    name: str,
+    path: Path,
+    mode: str,
+    tools: list[Tool],
+    findings: list[str] | None = None,
+    kind: str = "",
+    denied: list[str] | None = None,
 ) -> None:
-    inv.agents.append(Agent(name, str(path), mode, tools, list(findings or [])))
+    inv.agents.append(Agent(name, str(path), mode, tools, list(findings or []), kind=kind, denied=list(denied or [])))
 
 
 _ALL_BASH = frozenset({"bash", "bash(*)", "bash(:*)"})
@@ -325,6 +338,16 @@ def claude_code_mode(settings: list[dict[str, Any]]) -> tuple[str, list[str]]:
     return "approval", findings
 
 
+def claude_code_denied(settings: list[dict[str, Any]]) -> list[str]:
+    """Tool rules the settings deny, e.g. ["WebFetch", "Bash(curl:*)"]."""
+    out: list[str] = []
+    for data in settings:
+        perms = data.get("permissions") if isinstance(data, dict) else None
+        if isinstance(perms, dict):
+            out += [r for r in perms.get("deny") or [] if isinstance(r, str)]
+    return out
+
+
 def _claude_settings(inv: Inventory, *dirs: Path) -> list[dict[str, Any]]:
     out = []
     for d in dirs:
@@ -343,12 +366,15 @@ def discover_agents(inv: Inventory, home: Path, appdata: Path, project: Path | N
         data = data if isinstance(data, dict) else {}
         mode, findings = claude_code_mode(user_settings)
         tools = _servers(data.get("mcpServers"), str(home / ".claude.json"))
-        _add(inv, "Claude Code (user)", home / ".claude.json", mode, tools, findings)
+        _add(inv, "Claude Code (user)", home / ".claude.json", mode, tools, findings, "claude-code",
+             claude_code_denied(user_settings))  # fmt: skip
         for proj, cfg in (data.get("projects") or {}).items():
             if isinstance(cfg, dict) and cfg.get("mcpServers"):
-                mode, findings = claude_code_mode(user_settings + _claude_settings(inv, Path(proj) / ".claude"))
+                settings = user_settings + _claude_settings(inv, Path(proj) / ".claude")
+                mode, findings = claude_code_mode(settings)
                 tools = _servers(cfg["mcpServers"], str(home / ".claude.json"))
-                _add(inv, f"Claude Code ({proj})", home / ".claude.json", mode, tools, findings)
+                _add(inv, f"Claude Code ({proj})", home / ".claude.json", mode, tools, findings, "claude-code",
+                     claude_code_denied(settings))  # fmt: skip
     for desktop in (
         appdata / "Claude",
         home / "Library" / "Application Support" / "Claude",
@@ -357,16 +383,18 @@ def discover_agents(inv: Inventory, home: Path, appdata: Path, project: Path | N
         path = desktop / "claude_desktop_config.json"
         data = _read(path, inv)
         if isinstance(data, dict):
-            _add(inv, "Claude Desktop", path, "none", _servers(data.get("mcpServers"), str(path)))
+            _add(
+                inv, "Claude Desktop", path, "none", _servers(data.get("mcpServers"), str(path)), kind="claude-desktop"
+            )
             break
     path = home / ".cursor" / "mcp.json"
     data = _read(path, inv)
     if isinstance(data, dict):
-        _add(inv, "Cursor (user)", path, "approval", _servers(data.get("mcpServers"), str(path)))
+        _add(inv, "Cursor (user)", path, "approval", _servers(data.get("mcpServers"), str(path)), kind="cursor")
     path = home / ".codeium" / "windsurf" / "mcp_config.json"
     data = _read(path, inv)
     if isinstance(data, dict):
-        _add(inv, "Windsurf", path, "approval", _servers(data.get("mcpServers"), str(path)))
+        _add(inv, "Windsurf", path, "approval", _servers(data.get("mcpServers"), str(path)), kind="windsurf")
     for user_dir in (
         appdata / "Code" / "User",
         home / "Library" / "Application Support" / "Code" / "User",
@@ -378,7 +406,7 @@ def discover_agents(inv: Inventory, home: Path, appdata: Path, project: Path | N
             if isinstance(data, dict):
                 block = data.get("servers") if name == "mcp.json" else (data.get("mcp") or {}).get("servers")
                 if block:
-                    _add(inv, "VS Code (user)", path, "approval", _servers(block, str(path)))
+                    _add(inv, "VS Code (user)", path, "approval", _servers(block, str(path)), kind="vscode")
 
     if project is not None:
         project_settings = _claude_settings(inv, project / ".claude")
@@ -387,13 +415,15 @@ def discover_agents(inv: Inventory, home: Path, appdata: Path, project: Path | N
             data = data if isinstance(data, dict) else {}
             mode, findings = claude_code_mode(user_settings + project_settings)
             tools = _servers(data.get("mcpServers"), str(project / ".mcp.json"))
-            _add(inv, "Claude Code (project)", project / ".mcp.json", mode, tools, findings)
+            _add(inv, "Claude Code (project)", project / ".mcp.json", mode, tools, findings, "claude-code",
+                 claude_code_denied(user_settings + project_settings))  # fmt: skip
         for rel, agent, key in ((".cursor/mcp.json", "Cursor (project)", "mcpServers"),
                                 (".vscode/mcp.json", "VS Code (project)", "servers")):  # fmt: skip
             path = project / rel
             data = _read(path, inv)
             if isinstance(data, dict):
-                _add(inv, agent, path, "approval", _servers(data.get(key), str(path)))
+                kind = "cursor" if agent.startswith("Cursor") else "vscode"
+                _add(inv, agent, path, "approval", _servers(data.get(key), str(path)), kind=kind)
         discover_workflows(inv, project)
 
 
@@ -478,7 +508,7 @@ def _workflow_agent(path, wf, job_id, job, step, label, perms, untrusted) -> Age
     config_text = repr(step.get("with") or {})
     unrestricted = _UNRESTRICTED_HINTS.search(config_text) or _BARE_BASH.search(config_text)
     mode = "unrestricted" if unrestricted else "allowlist"
-    agent = Agent(f"{label} in {path.name}:{job_id}", str(path), mode, local=False)
+    agent = Agent(f"{label} in {path.name}:{job_id}", str(path), mode, local=False, kind="ci")
 
     summary, can_write = _describe_permissions(perms)
     agent.credentials.append(Credential("github-token", "GITHUB_TOKEN", str(path), detail=summary))
@@ -492,8 +522,11 @@ def _workflow_agent(path, wf, job_id, job, step, label, perms, untrusted) -> Age
         if name != "GITHUB_TOKEN":
             agent.credentials.append(Credential(_env_kind(name) or "secret", name, str(path)))
 
+    agent.triggers = list(untrusted)
+    agent.can_write = can_write
     if untrusted:
         gate = " ".join(str(c) for c in (job.get("if"), step.get("if")) if c)
+        agent.gate = gate
         gated = f" (gated by `if: {gate[:120]}`)" if gate else " (no `if:` gate on who can trigger it)"
         agent.findings.append(f"triggered by {', '.join(untrusted)}: text anyone can write reaches the agent{gated}")
         held = ([summary] if can_write else []) + [n for n in secrets if n != "GITHUB_TOKEN"]

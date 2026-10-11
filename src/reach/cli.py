@@ -19,6 +19,7 @@ from .catalog import Catalog, bundled
 from .engine import Environment, Principal, Query, ResourcePolicy, Result, Verdict, decide
 from .loaders import AuthorizationDetails, trust_policy
 from .policy import PolicyError, load_policy_file
+from .trifecta import LEGS, Assessment, assess_all
 
 ADHOC_ARN = "arn:aws:iam::111122223333:role/reach-adhoc"
 
@@ -200,6 +201,28 @@ def _render_reach(resolutions, results: dict[str, list], colour: bool) -> str:
     return "\n".join(lines)
 
 
+def _render_trifecta(assessments: list[Assessment], colour: bool) -> str:
+    red, yellow, dim, reset = ("\x1b[1;31m", "\x1b[1;33m", "\x1b[2m", "\x1b[0m") if colour else ("",) * 4
+    lines = ["", "Lethal trifecta (untrusted input + private data + exfiltration in one agent)"]
+    for a in assessments:
+        if not a.complete:
+            missing = ", ".join(k for k in LEGS if not a.legs[k])
+            lines.append(f"  {a.agent}: {dim}not complete (no {missing}){reset}")
+            continue
+        tint = red if a.severity == "critical" else yellow
+        lines.append(f"  {tint}{a.severity.upper()}{reset}  {a.agent}")
+        for kind in LEGS:
+            for leg in a.legs[kind]:
+                gate = f" {dim}(needs human approval){reset}" if leg.gated else ""
+                lines.append(f"    {kind:<15} {leg.source}{gate}")
+        fix = a.cheapest_fix()
+        if fix:
+            lines.append(f"    {dim}cheapest fix, break the {fix[0]} leg:{reset} {fix[1]}")
+        if a.unclassified:
+            lines.append(f"    {dim}unclassified MCP servers: {', '.join(a.unclassified)}{reset}")
+    return "\n".join(lines)
+
+
 def cmd_agents(args: argparse.Namespace) -> int:
     inv = discover(home=Path(args.home) if args.home else None, project=Path(args.project) if args.project else None)
     resolutions: list = []
@@ -214,8 +237,13 @@ def cmd_agents(args: argparse.Namespace) -> int:
                 results[res.profile] = capabilities(details, res.arn)
             except KeyError as exc:
                 results[res.profile] = f"not in the snapshot: {exc}"
+    assessments = assess_all(inv, {k: v for k, v in results.items() if not isinstance(v, str)})
     if args.json:
         payload = asdict(inv)
+        payload["trifecta"] = [
+            {**asdict(a), "complete": a.complete, "severity": a.severity, "cheapest_fix": a.cheapest_fix()}
+            for a in assessments
+        ]
         payload["resolutions"] = [asdict(r) for r in resolutions]
         payload["capabilities"] = {k: v if isinstance(v, str) else [asdict(c) for c in v] for k, v in results.items()}
         print(json.dumps(payload, indent=2, default=str))
@@ -224,6 +252,7 @@ def cmd_agents(args: argparse.Namespace) -> int:
         print(_render_inventory(inv, colour))
         if args.resolve:
             print(_render_reach(resolutions, results, colour))
+        print(_render_trifecta(assessments, colour))
     return 1 if args.fail_on_hardcoded and inv.hardcoded else 0
 
 
