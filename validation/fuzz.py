@@ -203,6 +203,9 @@ def random_context(rng: random.Random) -> dict[str, str | None]:
     epoch = rng.choice(EPOCHS)
     ctx["aws:EpochTime"] = str(epoch)
     ctx["aws:CurrentTime"] = render_time(epoch, "iso")
+    # Policies may test aws:TokenIssueTime, so a concrete request must decide it too: a key left out of the
+    # context is unknown to the engine but absent to the reference (seed 1, case 198 in CI).
+    ctx["aws:TokenIssueTime"] = None if rng.random() < 0.5 else render_time(epoch - 3600, "iso")
     return ctx
 
 
