@@ -49,9 +49,10 @@ Reach is built in phases. Each one ships something usable on its own.
 - [x] Credentials per tool (env, args, headers, URLs) and ambient ones (`~/.aws` profiles, environment, `gh`, Docker, kube, SSH, `.env`)
 - [x] Hardcoded-secret findings; no secret value is ever output (tested by planting fake secrets in every location)
 - [x] `--resolve`: AWS profiles to principals via `sts:GetCallerIdentity`; `--authz`: high-impact capabilities per principal
-- [ ] Agentic GitHub workflows (`claude-code-action`, Gemini, Codex) as agents
+- [x] Agentic GitHub workflows (`claude-code-action`, Gemini CLI, Codex, AI Inference): untrusted triggers, `if:` gates, token permissions, OIDC, secrets
+- [x] `.env` files tracked in git flagged as committed secrets
 - [ ] GitHub token scopes and app permissions; Slack scopes
-- [ ] Per-agent tool permissions (Claude Code `permissions.allow/deny`) to refine shell access
+- [x] Shell modes per agent (unrestricted / approval / allowlist / denied / none) from Claude Code `permissions` and CI agent configs
 
 ## Phase 4: lethal-trifecta paths, then v1.0
 

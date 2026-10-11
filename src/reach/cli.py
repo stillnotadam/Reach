@@ -130,24 +130,33 @@ def _render_inventory(inv: Inventory, colour: bool) -> str:
     if not inv.agents:
         lines.append("  none found")
     for agent in inv.agents:
-        shell = "shell access" if agent.shell else "no shell"
-        lines.append(f"  {agent.name}  {dim}{agent.config}  ({shell}){reset}")
-        if not agent.tools:
+        where = "" if agent.local else ", runs in CI"
+        lines.append(f"  {agent.name}  {dim}{agent.config}  (shell: {agent.shell_mode}{where}){reset}")
+        for finding in agent.findings:
+            lines.append(f"    {red}! {finding}{reset}")
+        for cred in agent.credentials:
+            detail = f" ({cred.detail})" if cred.detail else ""
+            lines.append(f"    holds {cred.kind}: {cred.name}{detail}")
+        if not agent.tools and agent.local:
             lines.append(f"    {dim}no MCP servers{reset}")
         for tool in agent.tools:
-            where = tool.url or tool.command
-            lines.append(f"    {tool.name}  [{tool.transport}]  {dim}{where}{reset}")
+            target = tool.url or tool.command
+            lines.append(f"    {tool.name}  [{tool.transport}]  {dim}{target}{reset}")
             for cred in tool.credentials:
                 flag = f"  {red}HARDCODED IN CONFIG{reset}" if cred.hardcoded else ""
                 detail = f" = {cred.detail}" if cred.detail else ""
                 lines.append(f"      {cred.kind}: {cred.name}{detail}{flag}")
     lines.append("")
-    lines.append("Ambient credentials (readable by any agent with shell access)")
+    lines.append("Ambient credentials (readable by local agents with shell access, with or without approval)")
     if not inv.ambient:
         lines.append("  none found")
     for cred in inv.ambient:
         flag = f"  {red}plaintext file{reset}" if cred.hardcoded else ""
-        detail = f" = {cred.detail}" if cred.detail and cred.detail != cred.name else ""
+        if cred.hardcoded and cred.detail:
+            flag, cred_detail = f"  {red}{cred.detail.upper()}{reset}", ""
+        else:
+            cred_detail = cred.detail
+        detail = f" = {cred_detail}" if cred_detail and cred_detail != cred.name else ""
         lines.append(f"  {cred.kind}: {cred.name}{detail}  {dim}{cred.source}{reset}{flag}")
     hardcoded = inv.hardcoded
     if hardcoded:

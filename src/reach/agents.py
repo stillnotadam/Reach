@@ -5,6 +5,9 @@ module is the first: an inventory of
 
 * agents found on the machine or in a project (Claude Code, Claude Desktop,
   Cursor, VS Code, Windsurf),
+* AI agents in GitHub Actions workflows (claude-code-action, Gemini CLI,
+  Codex), with their triggers, token permissions and secrets,
+* each agent's shell mode, from its own permission settings,
 * the MCP servers each one is configured to run,
 * the credentials each server is handed (environment variables, CLI
   arguments, HTTP headers, URLs), and
@@ -26,6 +29,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
+import subprocess
 import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -111,12 +116,29 @@ class Tool:
     credentials: list[Credential] = field(default_factory=list)
 
 
+# How freely an agent can run shell commands:
+#   unrestricted - with no human check (bypass mode, Bash allowed outright, CI agent with Bash)
+#   approval     - a human approves each command (the default for local coding agents)
+#   allowlist    - only pre-approved tools, and no human in the loop (typical CI agents)
+#   denied       - shell explicitly blocked by the agent's settings
+#   none         - the agent has no shell tool at all
+SHELL_MODES = ("unrestricted", "approval", "allowlist", "denied", "none")
+
+
 @dataclass
 class Agent:
     name: str
     config: str
-    shell: bool  # can run arbitrary commands, so ambient credentials are in reach
+    shell_mode: str  # one of SHELL_MODES
     tools: list[Tool] = field(default_factory=list)
+    findings: list[str] = field(default_factory=list)
+    local: bool = True  # runs on this machine; CI agents run on a runner and cannot read local files
+    credentials: list[Credential] = field(default_factory=list)  # handed to the agent itself (CI secrets, tokens)
+
+    @property
+    def shell(self) -> bool:
+        """Can this agent read the machine's ambient credentials (with or without a human approving)?"""
+        return self.local and self.shell_mode in ("unrestricted", "approval")
 
 
 @dataclass
@@ -128,6 +150,10 @@ class Inventory:
     @property
     def hardcoded(self) -> list[tuple[Agent, Tool, Credential]]:
         return [(a, t, c) for a in self.agents for t in a.tools for c in t.credentials if c.hardcoded]
+
+    @property
+    def findings(self) -> list[tuple[Agent, str]]:
+        return [(a, f) for a in self.agents for f in a.findings]
 
 
 # --- tolerant JSON ---------------------------------------------------------------------
@@ -263,20 +289,66 @@ def _read(path: Path, inv: Inventory) -> Any:
         return None
 
 
-def _add(inv: Inventory, name: str, path: Path, shell: bool, tools: list[Tool]) -> None:
-    inv.agents.append(Agent(name, str(path), shell, tools))
+def _add(
+    inv: Inventory, name: str, path: Path, mode: str, tools: list[Tool], findings: list[str] | None = None
+) -> None:
+    inv.agents.append(Agent(name, str(path), mode, tools, list(findings or [])))
+
+
+_ALL_BASH = frozenset({"bash", "bash(*)", "bash(:*)"})
+
+
+def claude_code_mode(settings: list[dict[str, Any]]) -> tuple[str, list[str]]:
+    """Shell mode from Claude Code settings files, lowest precedence first (user, project, local)."""
+    allow: list[str] = []
+    deny: list[str] = []
+    default_mode = None
+    for data in settings:
+        perms = data.get("permissions") if isinstance(data, dict) else None
+        if not isinstance(perms, dict):
+            continue
+        allow += [r for r in perms.get("allow") or [] if isinstance(r, str)]
+        deny += [r for r in perms.get("deny") or [] if isinstance(r, str)]
+        default_mode = perms.get("defaultMode", default_mode)
+    if any(r.strip().lower() in _ALL_BASH for r in deny):
+        return "denied", []
+    if default_mode == "bypassPermissions":
+        return "unrestricted", [
+            "defaultMode is bypassPermissions: every tool call, shell included, runs without approval"
+        ]
+    if any(r.strip().lower() in _ALL_BASH for r in allow):
+        return "unrestricted", ["Bash is allowed for every command without approval"]
+    findings = []
+    pre = [r for r in allow if r.strip().lower().startswith("bash(")]
+    if pre:
+        findings.append(f"{len(pre)} shell command pattern(s) run without approval, e.g. {pre[0]}")
+    return "approval", findings
+
+
+def _claude_settings(inv: Inventory, *dirs: Path) -> list[dict[str, Any]]:
+    out = []
+    for d in dirs:
+        for name in ("settings.json", "settings.local.json"):
+            data = _read(d / name, inv)
+            if isinstance(data, dict):
+                out.append(data)
+    return out
 
 
 def discover_agents(inv: Inventory, home: Path, appdata: Path, project: Path | None) -> None:
     # Claude Code: user-level servers, per-project servers kept in ~/.claude.json, and a project's .mcp.json.
+    user_settings = _claude_settings(inv, home / ".claude")
     data = _read(home / ".claude.json", inv)
-    if isinstance(data, dict):
+    if isinstance(data, dict) or user_settings:
+        data = data if isinstance(data, dict) else {}
+        mode, findings = claude_code_mode(user_settings)
         tools = _servers(data.get("mcpServers"), str(home / ".claude.json"))
-        _add(inv, "Claude Code (user)", home / ".claude.json", True, tools)
+        _add(inv, "Claude Code (user)", home / ".claude.json", mode, tools, findings)
         for proj, cfg in (data.get("projects") or {}).items():
             if isinstance(cfg, dict) and cfg.get("mcpServers"):
-                _add(inv, f"Claude Code ({proj})", home / ".claude.json", True,
-                     _servers(cfg["mcpServers"], str(home / ".claude.json")))  # fmt: skip
+                mode, findings = claude_code_mode(user_settings + _claude_settings(inv, Path(proj) / ".claude"))
+                tools = _servers(cfg["mcpServers"], str(home / ".claude.json"))
+                _add(inv, f"Claude Code ({proj})", home / ".claude.json", mode, tools, findings)
     for desktop in (
         appdata / "Claude",
         home / "Library" / "Application Support" / "Claude",
@@ -285,16 +357,16 @@ def discover_agents(inv: Inventory, home: Path, appdata: Path, project: Path | N
         path = desktop / "claude_desktop_config.json"
         data = _read(path, inv)
         if isinstance(data, dict):
-            _add(inv, "Claude Desktop", path, False, _servers(data.get("mcpServers"), str(path)))
+            _add(inv, "Claude Desktop", path, "none", _servers(data.get("mcpServers"), str(path)))
             break
     path = home / ".cursor" / "mcp.json"
     data = _read(path, inv)
     if isinstance(data, dict):
-        _add(inv, "Cursor (user)", path, True, _servers(data.get("mcpServers"), str(path)))
+        _add(inv, "Cursor (user)", path, "approval", _servers(data.get("mcpServers"), str(path)))
     path = home / ".codeium" / "windsurf" / "mcp_config.json"
     data = _read(path, inv)
     if isinstance(data, dict):
-        _add(inv, "Windsurf", path, True, _servers(data.get("mcpServers"), str(path)))
+        _add(inv, "Windsurf", path, "approval", _servers(data.get("mcpServers"), str(path)))
     for user_dir in (
         appdata / "Code" / "User",
         home / "Library" / "Application Support" / "Code" / "User",
@@ -306,18 +378,130 @@ def discover_agents(inv: Inventory, home: Path, appdata: Path, project: Path | N
             if isinstance(data, dict):
                 block = data.get("servers") if name == "mcp.json" else (data.get("mcp") or {}).get("servers")
                 if block:
-                    _add(inv, "VS Code (user)", path, True, _servers(block, str(path)))
+                    _add(inv, "VS Code (user)", path, "approval", _servers(block, str(path)))
 
     if project is not None:
-        for rel, agent, key in (
-            (".mcp.json", "Claude Code (project)", "mcpServers"),
-            (".cursor/mcp.json", "Cursor (project)", "mcpServers"),
-            (".vscode/mcp.json", "VS Code (project)", "servers"),
-        ):
+        project_settings = _claude_settings(inv, project / ".claude")
+        data = _read(project / ".mcp.json", inv)
+        if isinstance(data, dict) or project_settings:
+            data = data if isinstance(data, dict) else {}
+            mode, findings = claude_code_mode(user_settings + project_settings)
+            tools = _servers(data.get("mcpServers"), str(project / ".mcp.json"))
+            _add(inv, "Claude Code (project)", project / ".mcp.json", mode, tools, findings)
+        for rel, agent, key in ((".cursor/mcp.json", "Cursor (project)", "mcpServers"),
+                                (".vscode/mcp.json", "VS Code (project)", "servers")):  # fmt: skip
             path = project / rel
             data = _read(path, inv)
             if isinstance(data, dict):
-                _add(inv, agent, path, True, _servers(data.get(key), str(path)))
+                _add(inv, agent, path, "approval", _servers(data.get(key), str(path)))
+        discover_workflows(inv, project)
+
+
+# --- AI agents in GitHub Actions -------------------------------------------------------
+
+AGENT_ACTIONS = {
+    "anthropics/claude-code-action": "Claude Code",
+    "anthropics/claude-code-base-action": "Claude Code",
+    "google-github-actions/run-gemini-cli": "Gemini CLI",
+    "openai/codex-action": "Codex",
+    "actions/ai-inference": "GitHub AI Inference",
+}
+# Events whose payload (issue bodies, comments, PR titles from forks) anyone on the internet can write.
+UNTRUSTED_TRIGGERS = frozenset({
+    "issue_comment", "issues", "pull_request_target", "pull_request_review_comment", "pull_request_review",
+    "discussion", "discussion_comment",
+})  # fmt: skip
+_SECRET_REF = re.compile(r"\$\{\{\s*secrets\.([A-Za-z0-9_]+)\s*\}\}")
+_UNRESTRICTED_HINTS = re.compile(r"dangerously|--yolo|danger-full-access|bypassPermissions", re.I)
+_BARE_BASH = re.compile(r"\bBash\b(?!\()")
+
+
+def _load_yaml(path: Path, inv: Inventory) -> Any:
+    from ruamel.yaml import YAML  # noqa: PLC0415 - only needed for workflows
+    from ruamel.yaml.error import YAMLError  # noqa: PLC0415
+
+    try:
+        return YAML(typ="safe", pure=True).load(path.read_text(encoding="utf-8-sig"))
+    except (OSError, YAMLError) as exc:
+        inv.errors.append(f"{path}: {exc}")
+        return None
+
+
+def _triggers(on: Any) -> list[str]:
+    if isinstance(on, str):
+        return [on]
+    if isinstance(on, list):
+        return [t for t in on if isinstance(t, str)]
+    if isinstance(on, dict):
+        return [t for t in on if isinstance(t, str)]
+    return []
+
+
+def _describe_permissions(perms: Any) -> tuple[str, bool]:
+    """(human summary, whether the token can write anything)."""
+    if perms is None:
+        return "default token permissions (a repository setting; may be read-write)", True
+    if isinstance(perms, str):
+        return perms, perms == "write-all"
+    if isinstance(perms, dict):
+        writes = sorted(k for k, v in perms.items() if v == "write")
+        if not writes:
+            return "read-only", False
+        return "write: " + ", ".join(writes), True
+    return str(perms), True
+
+
+def discover_workflows(inv: Inventory, project: Path) -> None:
+    folder = project / ".github" / "workflows"
+    if not folder.is_dir():
+        return
+    for path in sorted([*folder.glob("*.yml"), *folder.glob("*.yaml")]):
+        wf = _load_yaml(path, inv)
+        if not isinstance(wf, dict):
+            continue
+        triggers = _triggers(wf.get("on", wf.get(True)))
+        untrusted = sorted(set(triggers) & UNTRUSTED_TRIGGERS)
+        for job_id, job in (wf.get("jobs") or {}).items():
+            if not isinstance(job, dict):
+                continue
+            perms = job.get("permissions", wf.get("permissions"))
+            for step in job.get("steps") or []:
+                if not isinstance(step, dict):
+                    continue
+                action = str(step.get("uses", "")).split("@")[0].lower()
+                if action not in AGENT_ACTIONS:
+                    continue
+                inv.agents.append(_workflow_agent(path, wf, job_id, job, step, AGENT_ACTIONS[action], perms, untrusted))
+
+
+def _workflow_agent(path, wf, job_id, job, step, label, perms, untrusted) -> Agent:
+    config_text = repr(step.get("with") or {})
+    unrestricted = _UNRESTRICTED_HINTS.search(config_text) or _BARE_BASH.search(config_text)
+    mode = "unrestricted" if unrestricted else "allowlist"
+    agent = Agent(f"{label} in {path.name}:{job_id}", str(path), mode, local=False)
+
+    summary, can_write = _describe_permissions(perms)
+    agent.credentials.append(Credential("github-token", "GITHUB_TOKEN", str(path), detail=summary))
+    if isinstance(perms, dict) and perms.get("id-token") == "write":
+        agent.credentials.append(
+            Credential("oidc-token", "id-token: write", str(path), detail="can request cloud credentials via OIDC")
+        )
+    scopes = [wf.get("env"), job.get("env"), step.get("env"), step.get("with")]
+    secrets = sorted({m for scope in scopes for m in _SECRET_REF.findall(repr(scope or {}))})
+    for name in secrets:
+        if name != "GITHUB_TOKEN":
+            agent.credentials.append(Credential(_env_kind(name) or "secret", name, str(path)))
+
+    if untrusted:
+        gate = " ".join(str(c) for c in (job.get("if"), step.get("if")) if c)
+        gated = f" (gated by `if: {gate[:120]}`)" if gate else " (no `if:` gate on who can trigger it)"
+        agent.findings.append(f"triggered by {', '.join(untrusted)}: text anyone can write reaches the agent{gated}")
+        held = ([summary] if can_write else []) + [n for n in secrets if n != "GITHUB_TOKEN"]
+        if held:
+            agent.findings.append("a prompt injection there could use: " + "; ".join(held))
+    if mode == "unrestricted":
+        agent.findings.append("the agent may run arbitrary shell commands on the runner")
+    return agent
 
 
 # --- ambient credentials ---------------------------------------------------------------
@@ -379,8 +563,26 @@ def discover_ambient(inv: Inventory, home: Path, environ: dict[str, str], projec
         for env_file in sorted(project.glob(".env*")):
             if env_file.is_file() and not env_file.name.endswith((".example", ".sample", ".template")):
                 names = _dotenv_secret_names(env_file)
+                tracked = "tracked in git: the secret is in the repository history" if _git_tracked(env_file) else ""
                 for name, kind in names:
-                    inv.ambient.append(Credential(kind, name, str(env_file), hardcoded=True))
+                    inv.ambient.append(Credential(kind, name, str(env_file), hardcoded=True, detail=tracked))
+
+
+def _git_tracked(path: Path) -> bool:
+    """Is this file committed to a git repository? False when git or a repository is missing."""
+    git = shutil.which("git")
+    if git is None:
+        return False
+    try:
+        done = subprocess.run(  # noqa: S603 - fixed argv, no shell
+            [git, "-C", str(path.parent), "ls-files", "--error-unmatch", path.name],
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return done.returncode == 0
 
 
 def _dotenv_secret_names(path: Path) -> list[tuple[str, str]]:
