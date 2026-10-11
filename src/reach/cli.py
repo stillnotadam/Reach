@@ -10,8 +10,11 @@ import argparse
 import json
 import sys
 from dataclasses import asdict
+from pathlib import Path
 
 from . import __version__
+from .agents import Inventory, discover
+from .blast import capabilities, resolve_profiles
 from .catalog import Catalog, bundled
 from .engine import Environment, Principal, Query, ResourcePolicy, Result, Verdict, decide
 from .loaders import AuthorizationDetails, trust_policy
@@ -121,6 +124,100 @@ def cmd_can(args: argparse.Namespace) -> int:
     return 0
 
 
+def _render_inventory(inv: Inventory, colour: bool) -> str:
+    red, dim, reset = ("\x1b[1;31m", "\x1b[2m", "\x1b[0m") if colour else ("", "", "")
+    lines = ["Agents"]
+    if not inv.agents:
+        lines.append("  none found")
+    for agent in inv.agents:
+        shell = "shell access" if agent.shell else "no shell"
+        lines.append(f"  {agent.name}  {dim}{agent.config}  ({shell}){reset}")
+        if not agent.tools:
+            lines.append(f"    {dim}no MCP servers{reset}")
+        for tool in agent.tools:
+            where = tool.url or tool.command
+            lines.append(f"    {tool.name}  [{tool.transport}]  {dim}{where}{reset}")
+            for cred in tool.credentials:
+                flag = f"  {red}HARDCODED IN CONFIG{reset}" if cred.hardcoded else ""
+                detail = f" = {cred.detail}" if cred.detail else ""
+                lines.append(f"      {cred.kind}: {cred.name}{detail}{flag}")
+    lines.append("")
+    lines.append("Ambient credentials (readable by any agent with shell access)")
+    if not inv.ambient:
+        lines.append("  none found")
+    for cred in inv.ambient:
+        flag = f"  {red}plaintext file{reset}" if cred.hardcoded else ""
+        detail = f" = {cred.detail}" if cred.detail and cred.detail != cred.name else ""
+        lines.append(f"  {cred.kind}: {cred.name}{detail}  {dim}{cred.source}{reset}{flag}")
+    hardcoded = inv.hardcoded
+    if hardcoded:
+        lines += ["", f"{red}{len(hardcoded)} secret(s) hardcoded in agent configs{reset} (values not shown):"]
+        lines += [f"  {a.name} / {t.name}: {c.name}  ({c.source})" for a, t, c in hardcoded]
+    for error in inv.errors:
+        lines.append(f"  {dim}could not read {error}{reset}")
+    return "\n".join(lines)
+
+
+def _aws_profiles(inv: Inventory) -> list[str]:
+    """Every AWS profile an agent can use: given to a tool, or ambient for agents with a shell."""
+    names = [c.detail for a in inv.agents for t in a.tools for c in t.credentials if c.kind == "aws-profile"]
+    if any(a.shell for a in inv.agents):
+        names += [c.detail for c in inv.ambient if c.kind == "aws-profile"]
+    return list(dict.fromkeys(n for n in names if n))
+
+
+def _render_reach(resolutions, results: dict[str, list], colour: bool) -> str:
+    red, green, yellow, dim, reset = (
+        ("\x1b[1;31m", "\x1b[1;32m", "\x1b[1;33m", "\x1b[2m", "\x1b[0m") if colour else ("",) * 5
+    )
+    tint = {Verdict.ALLOWED: red, Verdict.DENIED: green, Verdict.UNKNOWN: yellow}
+    lines = ["", "What the agents' AWS credentials can reach"]
+    for res in resolutions:
+        if res.error:
+            lines.append(f"  {res.profile}: {dim}not resolved ({res.error.splitlines()[0][:100]}){reset}")
+            continue
+        lines.append(f"  {res.profile} -> {res.arn}")
+        caps = results.get(res.profile)
+        if caps is None:
+            lines.append(f"    {dim}(pass --authz with an account snapshot to evaluate what it can do){reset}")
+            continue
+        if isinstance(caps, str):
+            lines.append(f"    {dim}{caps}{reset}")
+            continue
+        for cap in caps:
+            verdict = f"{tint[cap.verdict]}{cap.verdict.value.upper():<8}{reset}"
+            example = f"  {dim}e.g. {cap.witness.action} on {cap.witness.resource}{reset}" if cap.witness else ""
+            lines.append(f"    {verdict} {cap.label:<20} {dim}{cap.action}{reset}{example}")
+    return "\n".join(lines)
+
+
+def cmd_agents(args: argparse.Namespace) -> int:
+    inv = discover(home=Path(args.home) if args.home else None, project=Path(args.project) if args.project else None)
+    resolutions: list = []
+    results: dict[str, object] = {}
+    if args.resolve:
+        resolutions = resolve_profiles(_aws_profiles(inv))
+        details = AuthorizationDetails.load(args.authz) if args.authz else None
+        for res in resolutions:
+            if details is None or res.error:
+                continue
+            try:
+                results[res.profile] = capabilities(details, res.arn)
+            except KeyError as exc:
+                results[res.profile] = f"not in the snapshot: {exc}"
+    if args.json:
+        payload = asdict(inv)
+        payload["resolutions"] = [asdict(r) for r in resolutions]
+        payload["capabilities"] = {k: v if isinstance(v, str) else [asdict(c) for c in v] for k, v in results.items()}
+        print(json.dumps(payload, indent=2, default=str))
+    else:
+        colour = sys.stdout.isatty() and not args.no_colour
+        print(_render_inventory(inv, colour))
+        if args.resolve:
+            print(_render_reach(resolutions, results, colour))
+    return 1 if args.fail_on_hardcoded and inv.hardcoded else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="reach", description="Prove what cloud credentials can actually reach.")
     parser.add_argument("--version", action="version", version=f"reach {__version__}")
@@ -162,6 +259,20 @@ def build_parser() -> argparse.ArgumentParser:
     out.add_argument("--json", action="store_true")
     out.add_argument("--no-colour", action="store_true")
     can.set_defaults(func=cmd_can)
+
+    agents = sub.add_parser("agents", help="inventory AI agents, their MCP tools and the credentials they can use")
+    agents.add_argument("--project", help="also scan this project directory (.mcp.json, .cursor/, .vscode/, .env)")
+    agents.add_argument("--home", help="home directory to scan (default: yours)")
+    agents.add_argument("--json", action="store_true")
+    agents.add_argument("--no-colour", action="store_true")
+    agents.add_argument("--fail-on-hardcoded", action="store_true", help="exit 1 if a secret is hardcoded in a config")
+    agents.add_argument(
+        "--resolve",
+        action="store_true",
+        help="resolve each reachable AWS profile to its principal (calls sts:GetCallerIdentity; read-only)",
+    )
+    agents.add_argument("--authz", help="with --resolve: account snapshot to evaluate what each principal can do")
+    agents.set_defaults(func=cmd_agents)
     return parser
 
 

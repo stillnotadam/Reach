@@ -18,7 +18,8 @@ Reach is built in phases. Each one ships something usable on its own.
 - [x] Exact string literals (Z3 `StringVal` escape handling) and exact witness decoding
 - [x] Simulator harness written (`validation/aws_simulator.py`), tested against a fake client
 - [x] **First real runs** against the IAM policy simulator: 1 Reach bug fixed (`aws:RequestedRegion` and other always-present keys), 2 modelling gaps recorded ([FINDINGS](validation/FINDINGS.md))
-- [ ] Keep running the harness on new seeds and after every semantic change (`simulate-custom-policy`) and a live sandbox account: thousands of generated policy/request pairs, every disagreement either a Reach bug or a documented AWS quirk. In particular, verify:
+- [x] Live test on real S3: same-account account-principal grants only delegate; AWS's simulator is wrong (finding 4)
+- [ ] Keep running the harness on new seeds and after every semantic change. Still to verify:
   - segment-wise wildcard matching in the `Resource` element (documented for `ArnLike`; to confirm for `Resource`)
   - `Bool` value case handling
 - [x] Bundled Service Authorization Reference: per-action resource types and condition keys (simulator findings 2 and 3)
@@ -44,8 +45,13 @@ Reach is built in phases. Each one ships something usable on its own.
 
 ## Phase 3: agent discovery
 
-- [ ] Configs for Claude Code, Claude Desktop, Cursor and VS Code MCP; `.env` files; `~/.aws` profiles; `gh` auth; agentic GitHub workflows
-- [ ] Resolve credentials: GitHub token scopes and app permissions; AWS caller identity fed into the engine. Secret values are never printed.
+- [x] `reach agents`: Claude Code (user and per-project), Claude Desktop, Cursor, VS Code, Windsurf; MCP servers over stdio and HTTP
+- [x] Credentials per tool (env, args, headers, URLs) and ambient ones (`~/.aws` profiles, environment, `gh`, Docker, kube, SSH, `.env`)
+- [x] Hardcoded-secret findings; no secret value is ever output (tested by planting fake secrets in every location)
+- [x] `--resolve`: AWS profiles to principals via `sts:GetCallerIdentity`; `--authz`: high-impact capabilities per principal
+- [ ] Agentic GitHub workflows (`claude-code-action`, Gemini, Codex) as agents
+- [ ] GitHub token scopes and app permissions; Slack scopes
+- [ ] Per-agent tool permissions (Claude Code `permissions.allow/deny`) to refine shell access
 
 ## Phase 4: lethal-trifecta paths, then v1.0
 

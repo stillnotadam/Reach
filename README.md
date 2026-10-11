@@ -34,6 +34,18 @@ ALLOWED  iam:CreateAccessKey on *
 Queries are existential: `reach can … 's3:*' 'arn:aws:s3:::customer-pii/*'` asks whether *any* S3 action on *any*
 object in the bucket is reachable, and the witness shows one.
 
+## Agents
+
+```console
+$ reach agents --project . --resolve --authz authz.json
+```
+
+`reach agents` finds AI agents (Claude Code, Claude Desktop, Cursor, VS Code, Windsurf), the MCP servers each one runs,
+and the credentials each server is handed, plus ambient credentials that any agent with shell access can read. It flags
+secrets hardcoded in agent configs, and never prints a secret value. With `--resolve` it signs each reachable AWS profile
+in to find its principal (read-only `sts:GetCallerIdentity`). With `--authz` it then asks the engine what that principal
+can do: read secrets, decrypt with KMS, read or write S3, modify IAM, assume roles, start compute.
+
 ## What is modelled
 
 - Identity-based policies (inline, managed, group), permissions boundaries, session policies.
