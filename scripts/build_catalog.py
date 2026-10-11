@@ -32,10 +32,25 @@ def fetch(url: str) -> Any:
         return json.load(resp)
 
 
-def service_actions(entry: dict[str, Any]) -> list[str]:
+def service_actions(entry: dict[str, Any]) -> dict[str, Any]:
+    """Actions of one service, with the resource types and condition keys each one supports."""
     doc = fetch(entry["url"])
     prefix = doc.get("Name") or entry["service"]
-    return [f"{prefix}:{a['Name']}" for a in doc.get("Actions", [])]
+    resources = {r["Name"]: r for r in doc.get("Resources", [])}
+    out: dict[str, Any] = {"actions": [], "action_resources": {}, "action_keys": {}, "resource_formats": {}}
+    for name, r in resources.items():
+        out["resource_formats"][f"{prefix}:{name}"] = r.get("ARNFormats", [])
+    for action in doc.get("Actions", []):
+        full = f"{prefix}:{action['Name']}"
+        out["actions"].append(full)
+        names = [r["Name"] for r in action.get("Resources", [])]
+        # No resource types means the action only ever applies to "*".
+        out["action_resources"][full] = [f"{prefix}:{n}" for n in names]
+        keys = set(action.get("ActionConditionKeys", []))
+        for n in names:
+            keys.update(resources.get(n, {}).get("ConditionKeys", []))
+        out["action_keys"][full] = sorted(keys)
+    return out
 
 
 def main() -> int:
@@ -46,13 +61,19 @@ def main() -> int:
     index = fetch(INDEX)
     print(f"{len(index)} services in the reference", file=sys.stderr)
     actions: set[str] = set()
+    action_resources: dict[str, list[str]] = {}
+    action_keys: dict[str, list[str]] = {}
+    resource_formats: dict[str, list[str]] = {}
     failed: list[str] = []
     with ThreadPoolExecutor(max_workers=8) as pool:
         for entry, result in zip(index, pool.map(lambda e: _safe(service_actions, e), index)):
             if result is None:
                 failed.append(entry.get("service", "?"))
             else:
-                actions.update(result)
+                actions.update(result["actions"])
+                action_resources.update(result["action_resources"])
+                action_keys.update(result["action_keys"])
+                resource_formats.update(result["resource_formats"])
     if failed:
         print(f"failed to fetch {len(failed)} services: {', '.join(failed)}", file=sys.stderr)
         return 1
@@ -63,6 +84,9 @@ def main() -> int:
         "source": INDEX,
         "services": len(index),
         "actions": sorted(actions, key=str.lower),
+        "action_resources": action_resources,
+        "action_keys": action_keys,
+        "resource_formats": resource_formats,
     }
     with gzip.open(args.output, "wt", encoding="utf-8") as fh:
         json.dump(payload, fh, separators=(",", ":"))

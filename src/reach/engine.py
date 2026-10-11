@@ -151,7 +151,9 @@ class _Gate:
 class _Encoding:
     """All symbolic pieces of one query, built once and reused by every solver call."""
 
-    def __init__(self, principal: Principal, query: Query, env: Environment, catalog: Catalog | None):
+    def __init__(
+        self, principal: Principal, query: Query, env: Environment, catalog: Catalog | None, action: str | None
+    ):
         fixed: dict[str, str | None] = {
             "aws:PrincipalArn": principal.arn,
             "aws:PrincipalAccount": principal.account,
@@ -166,12 +168,19 @@ class _Encoding:
         self.denies: list[tuple[Statement, z3.BoolRef]] = []
         self.notes: list[str] = []
         self.catalog = catalog
+        # One concrete action standing for its whole action class (see _action_classes),
+        # or None: the action is then a free string, constrained only by the query.
+        self.rep = action
 
-        self.request = z3.And(
-            self._action_domain(principal, query, catalog),
-            self.arn.matches(query.resource),
-            *self.arn.well_formed,
-        )
+        if action is not None:
+            # Each action applies only to its own resource types (FINDINGS.md, finding 2).
+            globs = catalog.resource_globs(action) if catalog is not None else ()
+            action_term = z3.And(
+                self.action == sval(action), self.arn.matches_any(globs) if globs else z3.BoolVal(True)
+            )
+        else:
+            action_term = matches_any(self.action, (query.action.lower(),), arn=False)
+        self.request = z3.And(action_term, self.arn.matches(query.resource), *self.arn.well_formed)
         if query.resource.count(":") < 5 and query.resource != "*":
             self.notes.append(f"{query.resource!r} is not an ARN; AWS resources are always six-segment ARNs.")
 
@@ -208,7 +217,7 @@ class _Encoding:
                     self.denies.append((st, self._statement(st)))
 
         # Domain facts are only known once every condition has been encoded.
-        self.request = z3.And(self.request, *self.ctx.domain)
+        self.request = z3.And(self.request, *self.ctx.domain, *self._key_support())
         any_deny = z3.Or([e for _, e in self.denies]) if self.denies else z3.BoolVal(False)
         self.not_denied = z3.Not(any_deny)
         self.allowed = z3.And(self.request, self.not_denied, *[g.expr for g in self.scps], self.grant)
@@ -251,46 +260,25 @@ class _Encoding:
         unsettled = self.ctx.assumption("Allow", ACCOUNT_GRANT_REASON, rp.policy.name)
         return z3.Or(self.identity_path, direct, z3.And(anyof(Match.ACCOUNT), unsettled))
 
-    def _action_domain(self, principal: Principal, query: Query, catalog: Catalog | None) -> z3.BoolRef:
-        """Constrain the action to real actions that match the query and that some identity Allow could grant.
-
-        The second filter is a sound pruning: an action no identity-based
-        Allow statement mentions can never be allowed, so leaving it out of
-        the disjunction changes no verdict and keeps `*` queries fast.
-        """
-        literal = matches_any(self.action, (query.action.lower(),), arn=False)
-        if catalog is None:
-            if has_wildcard(query.action):
-                self.notes.append("No action catalogue loaded: witnesses may name actions that do not exist.")
-            return literal
-        candidates = catalog.matching(query.action)
-        if not candidates:
-            if has_wildcard(query.action):
-                self.notes.append(f"{query.action} matches no action in the catalogue ({catalog.generated}).")
-                return z3.BoolVal(False)
-            self.notes.append(
-                f"{query.action} is not in the action catalogue ({catalog.generated}); evaluated as written."
-            )
-            return literal
-
-        policies = list(principal.identity_policies)
-        if query.resource_policy is not None:
-            policies.append(query.resource_policy.policy)  # resource policies can grant on their own
-        grants = [s for p in policies for s in p.statements if s.effect == "Allow"]
-
-        def grantable(action: str) -> bool:
-            return any(any(iam_glob_regex(a).fullmatch(action) for a in s.actions) != s.not_actions for s in grants)
-
-        kept = [a.lower() for a in candidates if grantable(a)]
-        if not kept:
-            return z3.BoolVal(False)
-        terms = [self.action == sval(a) for a in kept]
-        return z3.Or(terms) if len(terms) > 1 else terms[0]
+    def _key_support(self) -> list[z3.BoolRef]:
+        """Service-specific keys exist only on actions that support them (FINDINGS.md, finding 3)."""
+        if self.rep is None or self.catalog is None:
+            return []
+        return [
+            z3.Not(self.ctx.presence[k])
+            for k, key in self.ctx.keys.items()
+            if not k.startswith("aws:") and key.kind == "string" and not self.catalog.supports_key(self.rep, key.name)
+        ]
 
     def _statement(self, stmt: Statement) -> z3.BoolRef:
-        action = matches_any(self.action, tuple(a.lower() for a in stmt.actions), arn=False)
-        if stmt.not_actions:
-            action = z3.Not(action)
+        if self.rep is not None:
+            if not _action_matches(stmt, self.rep):
+                return z3.BoolVal(False)
+            action: z3.BoolRef = z3.BoolVal(True)
+        else:
+            action = matches_any(self.action, tuple(a.lower() for a in stmt.actions), arn=False)
+            if stmt.not_actions:
+                action = z3.Not(action)
         resource = self.arn.matches_any(stmt.resources)
         if stmt.not_resources:
             resource = z3.Not(resource)
@@ -452,6 +440,82 @@ def _needed_assumptions(enc: _Encoding, model: z3.ModelRef) -> list:
     return needed
 
 
+def _action_matches(stmt: Statement, action: str) -> bool:
+    return any(iam_glob_regex(a).fullmatch(action) for a in stmt.actions) != stmt.not_actions
+
+
+def _action_classes(
+    principal: Principal, query: Query, env: Environment, catalog: Catalog | None
+) -> tuple[list[str] | None, list[str]]:
+    """Split the real actions matching the query into classes that every policy treats alike.
+
+    Two actions share a class when they match exactly the same statements,
+    apply to the same resource types and support the same service-specific
+    condition keys: every formula Reach builds is then identical for both,
+    so one representative per class decides the class. This turns a `*`
+    query over ~22,000 actions from one huge string disjunction (which made
+    Z3 give up) into a handful of small, concrete problems.
+
+    Returns (representatives, notes); representatives is None when the
+    action must stay a free string (no catalogue, or a literal action the
+    catalogue does not know).
+    """
+    notes: list[str] = []
+    if catalog is None:
+        if has_wildcard(query.action):
+            notes.append("No action catalogue loaded: witnesses may name actions that do not exist.")
+        return None, notes
+    candidates = catalog.matching(query.action)
+    if not candidates:
+        if has_wildcard(query.action):
+            notes.append(f"{query.action} matches no action in the catalogue ({catalog.generated}).")
+            return [], notes
+        notes.append(f"{query.action} is not in the action catalogue ({catalog.generated}); evaluated as written.")
+        return None, notes
+
+    # Sound pruning: an action no Allow statement that could grant it mentions is never allowed.
+    granting = list(principal.identity_policies)
+    if query.resource_policy is not None:
+        granting.append(query.resource_policy.policy)  # resource policies can grant on their own
+    grants = [st for p in granting for st in p.statements if st.effect == "Allow"]
+    kept = [a for a in candidates if any(_action_matches(st, a) for st in grants)]
+
+    policies = list(principal.identity_policies) + list(env.session_policies)
+    if principal.boundary is not None:
+        policies.append(principal.boundary)
+    if not env.management_account and not principal.is_service_linked:
+        policies.extend(p for _, layer in env.scp_layers for p in layer)
+    if query.resource_policy is not None:
+        policies.append(query.resource_policy.policy)
+    statements = [st for p in policies for st in p.statements]
+    keys = sorted({c.key for st in statements for c in st.conditions if not c.key.lower().startswith("aws:")})
+
+    classes: dict[tuple, str] = {}
+    for action in kept:
+        signature = (
+            tuple(_action_matches(st, action) for st in statements),
+            catalog.resource_globs(action),
+            tuple(catalog.supports_key(action, k) for k in keys),
+        )
+        classes.setdefault(signature, action.lower())
+    return list(classes.values()), notes
+
+
+def _explain_classes(denied: list[_Encoding], principal: Principal, query: Query) -> list[str]:
+    if not denied:
+        return [f"No identity-based or resource policy grants any action matching {query.action}."]
+    if len(denied) == 1:
+        return _explain_denial(denied[0], principal)
+    shown = 3
+    reasons = []
+    for enc in denied[:shown]:
+        name = enc.catalog.canonical(enc.rep) if enc.catalog is not None and enc.rep else enc.rep
+        reasons.extend(f"{name}: {r}" for r in _explain_denial(enc, principal))
+    if len(denied) > shown:
+        reasons.append(f"... and {len(denied) - shown} more action groups, each also proven denied.")
+    return reasons
+
+
 _BUNDLED = object()
 
 
@@ -467,22 +531,35 @@ def decide(
     """
     cat = bundled() if catalog is _BUNDLED else catalog
     assert cat is None or isinstance(cat, Catalog)
-    enc = _Encoding(principal, query, env or Environment(), cat)
-    result = Result(Verdict.UNKNOWN, principal.arn, query, notes=enc.notes)
+    env = env or Environment()
+    reps, notes = _action_classes(principal, query, env, cat)
+    result = Result(Verdict.UNKNOWN, principal.arn, query, notes=list(notes))
+    actions: list[str | None] = list(reps) if reps is not None else [None]
 
-    optimistic, opt_model = _model(enc, enc.allowed)
-    if optimistic == z3.unsat:
-        result.verdict = Verdict.DENIED
-        result.reasons = _explain_denial(enc, principal)
-    elif optimistic == z3.unknown:
-        result.reasons = ["The solver timed out or gave up on this query."]
-    else:
+    pending = None  # first class that is allowed only under assumptions
+    gave_up = False
+    denied: list[_Encoding] = []
+    for action in actions:
+        enc = _Encoding(principal, query, env, cat, action)
+        result.notes.extend(n for n in enc.notes if n not in result.notes)
+        optimistic, opt_model = _model(enc, enc.allowed)
+        if optimistic == z3.unsat:
+            denied.append(enc)
+            continue
+        if optimistic == z3.unknown or opt_model is None:
+            gave_up = True
+            continue
         proven, model = _model(enc, enc.allowed, *enc.pessimistic())
         if proven == z3.sat and model is not None:
             result.verdict = Verdict.ALLOWED
             result.witness = _witness(enc, model)
-        else:
-            assert opt_model is not None
+            break
+        if pending is None:
+            pending = (enc, opt_model, proven)
+
+    if result.verdict is not Verdict.ALLOWED:
+        if pending is not None:
+            enc, opt_model, proven = pending
             result.witness = _witness(enc, opt_model)
             for o in _needed_assumptions(enc, opt_model):
                 if o.effect == "Allow":
@@ -493,9 +570,14 @@ def decide(
                 result.reasons = ["Allowed in some context, but the solver gave up proving it for the worst case."]
             else:
                 result.reasons = ["Allowed only if conditions Reach does not model yet go the attacker's way."]
+        elif gave_up:
+            result.reasons = ["The solver timed out or gave up on this query."]
+        else:
+            result.verdict = Verdict.DENIED
+            result.reasons = _explain_classes(denied, principal, query)
 
     if result.witness is not None:
-        _self_check(principal, query, env or Environment(), result)
+        _self_check(principal, query, env, result)
 
     if principal.unresolved and result.verdict is not Verdict.UNKNOWN:
         result.reasons.append(

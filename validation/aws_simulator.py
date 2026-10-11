@@ -207,7 +207,8 @@ def run(client: SimulatorClient, cases: int, seed: int) -> tuple[list[Comparison
             continue
         action, resource, ctx = feasible_request(rng)
         query = Query(action, resource, ctx, case.resource_policy)
-        verdict = decide(case.principal, query, case.env, catalog=None).verdict
+        # The bundled catalogue, as in real use: per-action resource types and condition keys.
+        verdict = decide(case.principal, query, case.env).verdict
         request = build_request(case, action, resource, ctx)
         try:
             aws, detail = interpret(client.simulate_custom_policy(**request))

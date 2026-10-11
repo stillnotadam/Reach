@@ -18,7 +18,7 @@ Reach bug that is now fixed and covered by a test, a documented limitation, or a
   (`User` / `AssumedRole`). Tests: `test_requested_region_is_never_absent`,
   `test_if_exists_deny_on_region_cannot_use_a_regionless_request`, `test_principal_type_is_pinned`.
 
-## Reach limitations (documented, on the roadmap)
+## Modelling gaps (fixed with AWS's Service Authorization Reference)
 
 ### 2. Actions apply only to their own resource types
 
@@ -27,13 +27,16 @@ Reach bug that is now fixed and covered by a test, a documented limitation, or a
   `Allow *`, with zero matched statements.
 - **Impact on Reach:** DENIED proofs stay sound, because Reach searches a superset of real requests. An ALLOWED witness,
   though, could pair an action with an impossible resource.
-- **Fix needs:** per-action resource types from the Service Authorization Reference.
+- **Fix:** Reach bundles AWS's Service Authorization Reference (22,080 actions, 456 services). Each action applies only
+  to its documented resource types. Test: `test_action_on_wrong_resource_type_cannot_happen`.
 
 ### 3. Service-specific condition keys exist only for the actions that support them
 
 - **Found:** seed 1, case 29. `s3:max-keys` was pinned on an `s3:GetObject` request.
 - **AWS behaviour:** AWS drops the key, so an `IfExists` condition on it passes.
-- **Impact and fix:** same as finding 2. This needs per-action condition keys from the same reference data.
+- **Fix:** a service-specific key is absent on any action the reference does not list it for, and documented key
+  placeholders (`${TagKey}`, `<key>`) match by prefix, so the data can only widen the model. Test:
+  `test_service_key_only_on_supporting_actions`.
 
 ## Unsettled AWS rules (Reach reports UNKNOWN)
 
@@ -71,3 +74,4 @@ Reach bug that is now fixed and covered by a test, a documented limitation, or a
 | 1 | 500 | 281 | 0 | after finding 1 was fixed |
 | 2 | 2000 | 1157 | 7 | all finding 4 (account-principal grants) |
 | 2 | 2000 | 1150 | 0 | after finding 4: 49 cases UNKNOWN in Reach (AWS: 21 allowed, 28 denied) |
+| 3 | 1000 | 567 | 0 | with the bundled reference data; 18 UNKNOWN (AWS: 6 allowed, 12 denied) |

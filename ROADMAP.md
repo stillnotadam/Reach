@@ -11,7 +11,7 @@ Reach is built in phases. Each one ships something usable on its own.
 - [x] Three-valued verdicts: opaque conditions pinned to their worst case to separate proofs from guesses
 - [x] Denial explanations (blocking layer, or covering Deny statement)
 - [x] Offline loading from `get-account-authorization-details`
-- [x] Action catalogue from AWS's Service Authorization Reference (builder script; snapshot not yet bundled)
+- [x] Action catalogue from AWS's Service Authorization Reference (22,080 actions across 456 services, bundled)
 - [x] Solver-free reference evaluator; every witness is replayed through it before being reported
 - [x] Differential fuzzer: engine vs reference evaluator on random principals (exact verdict agreement, proof soundness)
 - [x] Segment-wise resource encoding (six ARN segment variables): ~1000x faster on queries that timed out
@@ -21,9 +21,8 @@ Reach is built in phases. Each one ships something usable on its own.
 - [ ] Keep running the harness on new seeds and after every semantic change (`simulate-custom-policy`) and a live sandbox account: thousands of generated policy/request pairs, every disagreement either a Reach bug or a documented AWS quirk. In particular, verify:
   - segment-wise wildcard matching in the `Resource` element (documented for `ArnLike`; to confirm for `Resource`)
   - `Bool` value case handling
-- [ ] **Per-action resource types** (first AWS-simulator finding): an action only applies to the resource types
-  the Service Authorization Reference lists for it; today Reach treats action and resource as independent, so a
-  witness could pair `s3:PutObject` with an IAM role ARN. Needs the reference data (same download as the catalogue).
+- [x] Bundled Service Authorization Reference: per-action resource types and condition keys (simulator findings 2 and 3)
+- [x] Action classes: one concrete solver problem per group of actions policies treat alike (`*` over 22,080 actions: ~0.1 s allowed, ~4 s full DENIED proof)
 - [ ] Free ARN-valued condition keys (e.g. `aws:SourceArn`) still use the slower single-string encoding
 - [x] Numeric, Date and IpAddress operators (Z3 integer and bit-vector theories), one presence flag per key across sorts
 - [x] UNKNOWN verdicts list only the assumptions the witness actually depends on
