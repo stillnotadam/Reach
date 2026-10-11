@@ -1,6 +1,8 @@
 # Reach
 
 [![CI](https://github.com/ctrl-adam/Reach/actions/workflows/ci.yml/badge.svg)](https://github.com/ctrl-adam/Reach/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/reach-security.svg)](https://pypi.org/project/reach-security/)
+[![Python](https://img.shields.io/pypi/pyversions/reach-security.svg)](https://pypi.org/project/reach-security/)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 
 **Prove what cloud credentials, and the AI agents holding them, can actually reach.**
