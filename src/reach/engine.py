@@ -500,7 +500,7 @@ def _explain_classes(denied: list[_Encoding], principal: Principal, query: Query
     if len(denied) == 1:
         return _explain_denial(denied[0], principal)
     shown = 3
-    reasons = []
+    reasons: list[str] = []
     for enc in denied[:shown]:
         name = enc.catalog.canonical(enc.rep) if enc.catalog is not None and enc.rep else enc.rep
         reasons.extend(f"{name}: {r}" for r in _explain_denial(enc, principal))

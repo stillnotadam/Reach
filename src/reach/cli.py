@@ -14,7 +14,7 @@ from pathlib import Path
 
 from . import __version__
 from .agents import Inventory, discover
-from .blast import capabilities, resolve_profiles
+from .blast import Capability, Resolution, capabilities, resolve_profiles
 from .catalog import Catalog, bundled
 from .engine import Environment, Principal, Query, ResourcePolicy, Result, Verdict, decide
 from .loaders import AuthorizationDetails, trust_policy
@@ -176,7 +176,7 @@ def _aws_profiles(inv: Inventory) -> list[str]:
     return list(dict.fromkeys(n for n in names if n))
 
 
-def _render_reach(resolutions, results: dict[str, list], colour: bool) -> str:
+def _render_reach(resolutions: list[Resolution], results: dict[str, list[Capability] | str], colour: bool) -> str:
     red, green, yellow, dim, reset = (
         ("\x1b[1;31m", "\x1b[1;32m", "\x1b[1;33m", "\x1b[2m", "\x1b[0m") if colour else ("",) * 5
     )
@@ -224,9 +224,14 @@ def _render_trifecta(assessments: list[Assessment], colour: bool) -> str:
 
 
 def cmd_agents(args: argparse.Namespace) -> int:
-    inv = discover(home=Path(args.home) if args.home else None, project=Path(args.project) if args.project else None)
-    resolutions: list = []
-    results: dict[str, object] = {}
+    home = Path(args.home) if args.home else None
+    inv = discover(
+        home=home,
+        project=Path(args.project) if args.project else None,
+        appdata=home / "AppData" / "Roaming" if home else None,  # a scanned home brings its own AppData
+    )
+    resolutions: list[Resolution] = []
+    results: dict[str, list[Capability] | str] = {}  # capabilities, or why there are none
     if args.resolve:
         resolutions = resolve_profiles(_aws_profiles(inv))
         details = AuthorizationDetails.load(args.authz) if args.authz else None
@@ -237,7 +242,7 @@ def cmd_agents(args: argparse.Namespace) -> int:
                 results[res.profile] = capabilities(details, res.arn)
             except KeyError as exc:
                 results[res.profile] = f"not in the snapshot: {exc}"
-    assessments = assess_all(inv, {k: v for k, v in results.items() if not isinstance(v, str)})
+    assessments = assess_all(inv, {k: v for k, v in results.items() if isinstance(v, list)})
     if args.json:
         payload = asdict(inv)
         payload["trifecta"] = [

@@ -26,7 +26,6 @@ import operator
 import re
 from collections.abc import Iterable
 from functools import lru_cache
-from typing import Optional
 
 from .conditions import MULTIVALUED_KEYS
 from .engine import Environment, Principal, ResourcePolicy
@@ -34,7 +33,7 @@ from .policy import Condition, Policy, Statement
 from .principals import Match, classify
 from .values import IP_KEYS, TIME_KEYS, parse_int, parse_ip, parse_ipv4_network, parse_time, principal_type
 
-Tri = Optional[bool]  # True, False, or None for "depends on something unmodelled"
+Tri = bool | None  # True, False, or None for "depends on something unmodelled"
 
 
 def _and(values: Iterable[Tri]) -> Tri:
@@ -142,7 +141,8 @@ def _hit(base: str, value: str, values: tuple[str, ...]) -> Tri:
         actual = parse(value)
         if actual is None:
             return None  # e.g. a decimal or signed number: not modelled
-        return any(_COMPARE[comparison](actual, parse(v)) for v in values)
+        bounds = [b for b in (parse(v) for v in values) if b is not None]  # _modelled already rejected None
+        return any(_COMPARE[comparison](actual, b) for b in bounds)
     address = parse_ip(value)
     if address is None:
         return None

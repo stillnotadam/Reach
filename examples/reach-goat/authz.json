@@ -1,0 +1,59 @@
+{
+  "UserDetailList": [
+    {
+      "UserName": "agent-dev",
+      "Arn": "arn:aws:iam::123456789012:user/agent-dev",
+      "GroupList": [],
+      "AttachedManagedPolicies": [{ "PolicyName": "goat-agent", "PolicyArn": "arn:aws:iam::123456789012:policy/goat-agent" }],
+      "UserPolicyList": [],
+      "Tags": [{ "Key": "team", "Value": "platform" }]
+    }
+  ],
+  "GroupDetailList": [],
+  "RoleDetailList": [
+    {
+      "RoleName": "deploy",
+      "Arn": "arn:aws:iam::123456789012:role/deploy",
+      "RolePolicyList": [
+        {
+          "PolicyName": "deploy-everything",
+          "PolicyDocument": { "Statement": [{ "Effect": "Allow", "Action": "*", "Resource": "*" }] }
+        }
+      ],
+      "AttachedManagedPolicies": [],
+      "AssumeRolePolicyDocument": {
+        "Statement": [
+          { "Effect": "Allow", "Principal": { "AWS": "arn:aws:iam::123456789012:user/agent-dev" }, "Action": "sts:AssumeRole" }
+        ]
+      }
+    }
+  ],
+  "Policies": [
+    {
+      "PolicyName": "goat-agent",
+      "Arn": "arn:aws:iam::123456789012:policy/goat-agent",
+      "DefaultVersionId": "v1",
+      "PolicyVersionList": [
+        {
+          "VersionId": "v1",
+          "IsDefaultVersion": true,
+          "Document": {
+            "Version": "2012-10-17",
+            "Statement": [
+              { "Sid": "ReadAppSecrets", "Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": "arn:aws:secretsmanager:*:123456789012:secret:app/*" },
+              { "Sid": "ReadData", "Effect": "Allow", "Action": ["s3:GetObject", "s3:ListBucket"], "Resource": "*" },
+              { "Sid": "NoIamChanges", "Effect": "Deny", "Action": "iam:*", "Resource": "*" },
+              {
+                "Sid": "WriteOnlyFromTheOffice",
+                "Effect": "Allow",
+                "Action": "s3:PutObject",
+                "Resource": "arn:aws:s3:::goat-uploads/*",
+                "Condition": { "IpAddress": { "aws:SourceIp": "203.0.113.0/24" } }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

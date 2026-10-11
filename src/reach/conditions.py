@@ -310,7 +310,8 @@ def encode_condition(cond: Condition, ctx: Context, stmt: Statement) -> z3.BoolR
             return ctx.opaque(stmt, f"IPv6 or malformed network in {op} {cond.key}")
         present = ctx.present(cond.key)
         is_v4, address = ctx.ip(cond.key)
-        matched = z3.And(is_v4, _any([(address & mask) == net for net, mask in networks if net is not None]))
+        valid = [n for n in networks if n is not None]
+        matched = z3.And(is_v4, _any([(address & mask) == net for net, mask in valid]))
         return _wrap(base, if_exists, present, matched)
 
     return ctx.opaque(stmt, f"operator {op} on {cond.key} is not modelled yet")

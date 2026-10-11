@@ -1,0 +1,24 @@
+# Deliberately vulnerable: anyone who can comment on an issue can steer an agent
+# that holds a write token, cloud credentials and a deploy key.
+name: issue triage
+on:
+  issue_comment:
+    types: [created]
+  issues:
+    types: [opened]
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: --allowedTools "Bash,Read,Edit,Write"
+        env:
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}

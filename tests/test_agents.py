@@ -19,6 +19,7 @@ FAKE = {
     "url_token": "fake-query-token-7777",
     "dotenv": "sk-fakeopenaikey000000000000",
     "arg": "fake-cli-arg-secret-5555",
+    "db_password": "fake-db-password-3333",
 }
 
 
@@ -51,9 +52,13 @@ def machine(tmp_path: Path):
         "mcpServers": {
             "db": {"command": "db-mcp", "args": ["--password", "ARG_SECRET", "--url=https://x.example/db"],},
             "safe": {"command": "safe-mcp", "env": {"API_KEY": "${API_KEY}"}},
+            "pg": {"command": "npx", "args": ["server-postgres", "postgresql://app:DB_PASSWORD@db.internal/prod"]},
         },
     }"""
-    write(home / ".cursor" / "mcp.json", cursor.replace("ARG_SECRET", FAKE["arg"]))
+    write(
+        home / ".cursor" / "mcp.json",
+        cursor.replace("ARG_SECRET", FAKE["arg"]).replace("DB_PASSWORD", FAKE["db_password"]),
+    )
     write(home / ".aws" / "credentials", f"[default]\naws_access_key_id = {FAKE['aws_id']}\n"
                                         f"aws_secret_access_key = {FAKE['aws_secret']}\n[prod-admin]\n")  # fmt: skip
     write(home / ".aws" / "config", "[profile prod-admin]\nregion = us-east-1\n[profile readonly]\n")
@@ -98,8 +103,14 @@ def test_ambient_credentials(machine):
 
 def test_hardcoded_summary(machine):
     hardcoded = {(t.name, c.name) for _, t, c in machine.hardcoded}
-    assert hardcoded == {("github", "GITHUB_PERSONAL_ACCESS_TOKEN"), ("slack", "SLACK_BOT_TOKEN"), ("remote", "url"),
-                         ("remote", "Authorization"), ("db", "--password")}  # fmt: skip
+    assert hardcoded == {
+        ("github", "GITHUB_PERSONAL_ACCESS_TOKEN"),
+        ("slack", "SLACK_BOT_TOKEN"),
+        ("remote", "url"),
+        ("remote", "Authorization"),
+        ("db", "--password"),
+        ("pg", "url"),
+    }
 
 
 def test_no_secret_value_ever_reaches_the_output(machine):

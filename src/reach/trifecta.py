@@ -141,9 +141,12 @@ def assess(agent: Agent, inv: Inventory, capabilities: dict[str, list[Capability
             gated = bool(agent.gate)
             how = f" behind `if: {agent.gate[:80]}`" if gated else ""
             add(UNTRUSTED, f"triggered by {', '.join(agent.triggers)}{how}", gated, _FIX["ci-trigger"])
-        secrets = [c.name for c in agent.credentials if c.kind not in ("github-token",)]
+        secrets = [c.name for c in agent.credentials if c.kind not in ("github-token", "oidc-token")]
         if secrets:
             add(PRIVATE, f"secrets in the job: {', '.join(secrets)}", False, _FIX["ci-secret"])
+        if any(c.kind == "oidc-token" for c in agent.credentials):
+            add(PRIVATE, "id-token: write: can request cloud credentials via OIDC", False,
+                "drop `id-token: write` from the agent job")  # fmt: skip
         token = next((c for c in agent.credentials if c.kind == "github-token"), None)
         if token is not None:
             add(PRIVATE, f"repository contents via GITHUB_TOKEN ({token.detail})")

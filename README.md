@@ -2,9 +2,23 @@
 
 **Prove what cloud credentials, and the AI agents holding them, can actually reach.**
 
-Reach compiles AWS IAM policies into SMT constraints and asks Z3 whether a
-principal can perform an action on a resource. Every answer is one of three
-verdicts, and Reach never rounds an `unknown` up or down:
+AI agents run with real credentials: an AWS profile on a laptop, a GitHub token in an MCP config, a write token in a CI
+job. Reach finds those agents and the credentials they can use. It proves what those credentials can do in AWS. And it
+reports the agents that combine untrusted input, private data and a way to send data out (the *lethal trifecta*), with
+the cheapest way to break each one.
+
+```bash
+pip install reach-security
+reach agents --project .                      # agents, tools, credentials, trifecta findings
+reach can --authz authz.json --principal dev secretsmanager:GetSecretValue '*'
+```
+
+Try it on the deliberately vulnerable [`examples/reach-goat`](examples/reach-goat).
+
+## How the reasoning works
+
+Reach compiles AWS IAM policies into SMT constraints and asks Z3 whether a principal can perform an action on a
+resource. Every answer is one of three verdicts, and Reach never rounds an `unknown` up or down:
 
 | Verdict   | Meaning |
 |-----------|---------|
@@ -12,7 +26,11 @@ verdicts, and Reach never rounds an `unknown` up or down:
 | `ALLOWED` | **Witness.** A concrete request that is allowed even when every condition Reach does not model goes against the attacker. |
 | `UNKNOWN` | Allowed only if some unmodelled condition goes the attacker's way. Reach lists exactly which assumptions that relies on. |
 
-> Status: pre-alpha. This is the reasoning core (Phase 1 of the [roadmap](ROADMAP.md)). Agent discovery and attack paths build on top of it.
+Every verdict is checked three ways. A second, solver-free implementation replays each witness. A fuzzer checks the two
+implementations against each other. And AWS's own policy simulator plus a live S3 test check both against AWS: see
+[validation/FINDINGS.md](validation/FINDINGS.md), which includes an error in AWS's simulator that Reach found.
+
+> Status: alpha (0.1.0). See the [roadmap](ROADMAP.md).
 
 ## Example
 

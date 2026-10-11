@@ -235,7 +235,9 @@ def _redact_args(args: list[str], source: str) -> tuple[str, list[Credential]]:
         elif "=" in arg and _SECRETISH_NAME.search(arg.split("=", 1)[0]) and not _is_reference(arg.split("=", 1)[1]):
             found.append(Credential("secret", arg.split("=", 1)[0].lstrip("-"), source, hardcoded=True))
             shown.append(arg.split("=", 1)[0] + "=<redacted>")
-        elif arg.startswith(("http://", "https://")):
+        elif re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", arg):
+            # Any URL, not only http(s): connection strings such as postgresql://user:password@host
+            # carry credentials in the userinfo part. (The reach-goat example caught this leak.)
             url, leaked = _safe_url(arg)
             if leaked:
                 found.append(Credential("secret", "url", source, hardcoded=True))
@@ -619,7 +621,7 @@ def _git_tracked(path: Path) -> bool:
 
 
 def _dotenv_secret_names(path: Path) -> list[tuple[str, str]]:
-    out = []
+    out: list[tuple[str, str]] = []
     try:
         lines = path.read_text(encoding="utf-8-sig", errors="replace").splitlines()
     except OSError:

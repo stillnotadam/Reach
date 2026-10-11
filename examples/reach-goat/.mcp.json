@@ -1,0 +1,25 @@
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "REPLACE-ME-not-a-real-token" }
+    },
+    "fetch": {
+      "command": "uvx",
+      "args": ["mcp-server-fetch"]
+    },
+    "analytics": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres", "postgresql://app:not-a-real-password@db.internal/prod"]
+    },
+    "aws": {
+      "command": "uvx",
+      "args": ["awslabs.aws-api-mcp-server", "--profile", "goat-admin"]
+    },
+    "notes": {
+      "command": "goat-notes-mcp",
+      "env": { "NOTES_API_KEY": "${NOTES_API_KEY}" }
+    }
+  }
+}
