@@ -153,3 +153,23 @@ def test_export_walks_the_tree_with_pagination():
     assert [name for name, _ in org.scp_layers("222222222222")] == ["Root", "Prod", "app2"]
     assert org.org_path("222222222222") == "o-test/r-1/ou-1/"
     assert len(org.rcps("123456789012")) == 3 and org.rcps("111111111111") == []
+
+
+def test_rcps_split_action_classes():
+    # Fuzz seed 13, case 133: actions an RCP treats differently must not share a representative, or a Deny on
+    # one of them "proves" the other denied.
+    from reach.engine import Environment  # noqa: PLC0415
+
+    rcp = parse_policy({"Version": "2012-10-17", "Statement": [
+        {"Effect": "Deny", "Principal": "*", "Action": "s3:GetObject", "Resource": "*"},
+        {"Effect": "Deny", "Principal": "*", "Action": "kms:*", "Resource": "*"},
+    ]}, "rcp")  # fmt: skip
+    env = Environment(rcps=[rcp])
+    objects = Principal(USER, [pol({"Effect": "Allow", "Action": "s3:*Object", "Resource": "*"})])
+    r = decide(objects, Query("s3:*", BUCKET), env)
+    assert r.verdict is Verdict.ALLOWED and r.witness.action.lower() != "s3:getobject"
+    # kms:RetireGrant is exempt from RCPs; kms:Decrypt is not (and is UNKNOWN: AWS managed keys are exempt).
+    kms = Principal(USER, [pol({"Effect": "Allow", "Action": ["kms:Decrypt", "kms:RetireGrant"], "Resource": "*"})])
+    key = f"arn:aws:kms:eu-west-1:{APP}:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+    r = decide(kms, Query("kms:*", key), env)
+    assert r.verdict is Verdict.ALLOWED and r.witness.action.lower() == "kms:retiregrant"

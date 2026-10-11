@@ -19,6 +19,10 @@
 
 ### Fixed
 
+- Soundness: actions that RCPs treat differently could share an action class, so an RCP Deny on one action
+  (`s3:GetObject`) was taken as a DENIED proof for another (`s3:PutObject`) that it does not cover. Found by the
+  CI fuzzer (seed 13, case 133); action classes now include RCP statements and each action's RCP scope.
+  Introduced in 0.2.0 with RCP support.
 - Witness ARNs could have empty or blank names (`arn:aws:s3:::accesspoint//object/`, `arn:aws:kms: : :key/ `). ARN
   placeholders from the action catalogue now match one character or more, the plainest resource type is tried
   first, and witnesses are tidied to a real region, the principal's account and `example` names, each rewrite kept

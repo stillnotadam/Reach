@@ -88,8 +88,11 @@ class ContextFile:
         found = [i for i in self.issues if i.category == INJECTION and _at_least(i.severity, "medium")]
         found.sort(key=lambda i: SEVERITIES.index(i.severity))
         # Husk can report one line twice (overt and plain override phrasing): keep the most severe per line.
-        lines: set[int | None] = set()
-        return [i for i in found if i.line is None or not (i.line in lines or lines.add(i.line))]
+        out: list[Issue] = []
+        for issue in found:
+            if issue.line is None or all(issue.line != kept.line for kept in out):
+                out.append(issue)
+        return out
 
 
 def _at_least(severity: str, floor: str) -> bool:

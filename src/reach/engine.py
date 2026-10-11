@@ -675,8 +675,17 @@ def _action_classes(
         policies.extend(p for _, layer in env.scp_layers for p in layer)
     if query.resource_policy is not None:
         policies.append(query.resource_policy.policy)
+    # RCPs deny too, and whether one applies depends on the action's service and exemptions (_rcp_scope).
+    # Leaving them out merged s3:GetObject and s3:PutObject into one class, and an RCP Deny on GetObject
+    # then "proved" PutObject denied (fuzz seed 13, case 133).
+    rcps = env.rcps if not principal.is_service_linked else []
+    policies.extend(rcps)
     statements = [st for p in policies for st in p.statements]
     keys = sorted({c.key for st in statements for c in st.conditions if not c.key.lower().startswith("aws:")})
+
+    def rcp_scope(action: str) -> tuple[bool, ...]:
+        service = action.split(":", 1)[0].lower()
+        return (service in RCP_SERVICES, action.lower() in RCP_EXEMPT_ACTIONS, service == "kms") if rcps else ()
 
     classes: dict[tuple, str] = {}
     for action in kept:
@@ -684,6 +693,7 @@ def _action_classes(
             tuple(_action_matches(st, action) for st in statements),
             catalog.resource_globs(action),
             tuple(catalog.supports_key(action, k) for k in keys),
+            rcp_scope(action),
         )
         classes.setdefault(signature, action.lower())
     return list(classes.values()), notes
