@@ -17,7 +17,9 @@ something we did not model (see engine.decide).
 
 from __future__ import annotations
 
+import operator
 from dataclasses import dataclass
+from fractions import Fraction
 from functools import lru_cache
 
 import z3
@@ -32,12 +34,15 @@ from .values import (
     IP_KEYS,
     MAX_EPOCH,
     TIME_KEYS,
+    UNMODELLED,
+    decimal_places,
     ignore_case_classes,
     parse_bool,
-    parse_int,
     parse_ip,
     parse_ip_network,
+    parse_number,
     parse_time,
+    request_number,
 )
 
 # Keys that carry several values per request. Single-valued operators on
@@ -141,6 +146,7 @@ class Context:
         self.strings: dict[str, z3.SeqRef] = {}
         self.ips: dict[str, tuple[z3.BoolRef, z3.BitVecRef]] = {}
         self.times: dict[str, z3.ArithRef] = {}  # by time group
+        self.numbers: dict[str, tuple[z3.BoolRef, z3.SeqRef, z3.SeqRef]] = {}  # see number_parts
         self.opaques: list[Opaque] = []
         # Facts about real requests (e.g. Bool keys only ever hold "true" or
         # "false"). They narrow the search to requests AWS can actually send.
@@ -238,6 +244,22 @@ class Context:
             return [(z3.BoolVal(True), sval(x)) for x in values]
         self._ensure(name)
         return self.sets[k]
+
+    def number_parts(self, name: str) -> tuple[z3.BoolRef, z3.SeqRef, z3.SeqRef]:
+        """A free key read as a plain decimal: (negative, whole digits, fraction digits). They are tied to the
+        key's string only when that string is a plain decimal, which fixes them uniquely (one sign, one point)."""
+        k = name.lower()
+        if k not in self.numbers:
+            value, n = self.string(name), len(self.numbers)
+            neg, whole, frac = z3.Bool(f"num_neg_{n}"), z3.String(f"num_whole_{n}"), z3.String(f"num_frac_{n}")
+            point = z3.If(z3.Length(frac) == 0, sval(""), z3.Concat(sval("."), frac))
+            digit = z3.Range("0", "9")
+            self.domain.append(z3.Implies(z3.InRe(value, _number_res()[1]), z3.And(
+                value == z3.Concat(z3.If(neg, sval("-"), sval("")), whole, point),
+                z3.InRe(whole, z3.Plus(digit)), z3.InRe(frac, z3.Star(digit)),
+            )))  # fmt: skip
+            self.numbers[k] = (neg, whole, frac)
+        return self.numbers[k]
 
     def string(self, name: str) -> z3.SeqRef:
         v = self._fixed(name.lower())
@@ -341,6 +363,86 @@ def wrap_presence(base: str, if_exists: bool, present: z3.BoolRef, matched: z3.B
     return z3.Or(z3.Not(present), matched) if if_exists else z3.And(present, matched)
 
 
+@lru_cache(maxsize=1)
+def _number_res() -> tuple[z3.ReRef, z3.ReRef]:
+    """(maybe a number, a plain decimal) as Z3 regexes; mirror values.LOOSE_NUMBER and CANONICAL_NUMBER.
+    Z3's characters stop at U+2FFFF, so "any non-ASCII character" is that range."""
+    ascii_digit = z3.Range("0", "9")
+    d = z3.Union(ascii_digit, z3.Range("\u0080", "\U0002ffff"))
+    sign = z3.Option(z3.Union(z3.Re("+"), z3.Re("-")))
+    mantissa = z3.Union(z3.Concat(z3.Plus(d), z3.Option(z3.Concat(z3.Re("."), z3.Star(d)))),
+                        z3.Concat(z3.Re("."), z3.Plus(d)))  # fmt: skip
+    exponent = z3.Option(z3.Concat(z3.Union(z3.Re("e"), z3.Re("E")), sign, z3.Plus(d)))
+    plain = z3.Concat(z3.Option(z3.Re("-")), z3.Plus(ascii_digit),
+                      z3.Option(z3.Concat(z3.Re("."), z3.Plus(ascii_digit))))  # fmt: skip
+    return z3.Concat(sign, mantissa, exponent), plain
+
+
+def _scaled(parts: tuple[z3.BoolRef, z3.SeqRef, z3.SeqRef], places: int) -> tuple[z3.BoolRef, z3.ArithRef, z3.BoolRef]:
+    """A plain decimal, from its parts (Context.number_parts), on a grid of 10**-places: (negative, signed value
+    * 10**places truncated toward zero, whether nonzero digits were cut off). Linear integer arithmetic over the
+    digit strings, so Z3 decides it without searching for where the point is."""
+    neg, whole, frac = parts
+    head = z3.SubString(frac, 0, places)  # Z3 clamps a substring that runs past the end
+    digits = z3.StrToInt(z3.Concat(whole, head)) if places else z3.StrToInt(whole)
+    magnitude: z3.ArithRef = digits
+    for kept in range(places):  # pad a shorter fraction: "1.5" on a 0.01 grid is 150
+        magnitude = z3.If(z3.Length(head) == kept, digits * 10 ** (places - kept), magnitude)
+    rest = z3.SubString(frac, places, z3.Length(frac) - places) if places else frac
+    cut = z3.Not(z3.InRe(rest, z3.Star(z3.Re("0"))))
+    return neg, z3.If(neg, -magnitude, magnitude), cut
+
+
+_PY_COMPARE = {"==": operator.eq, "<": operator.lt, "<=": operator.le, ">": operator.gt, ">=": operator.ge}
+
+
+def _numeric_compare(op: str, scaled: tuple[z3.BoolRef, z3.ArithRef, z3.BoolRef], bound: int) -> z3.BoolRef:
+    """value OP bound, exactly. The value lies strictly between its truncation and the next grid point (away from
+    zero) when digits were cut off; the bound is a grid point, so a strict comparison with the truncation decides."""
+    neg, s, cut = scaled
+    eq = z3.And(s == bound, z3.Not(cut))
+    lt = z3.If(z3.And(cut, neg), s <= bound, s < bound)
+    gt = z3.If(z3.And(cut, z3.Not(neg)), s >= bound, s > bound)
+    return {"==": eq, "<": lt, "<=": z3.Or(lt, eq), ">": gt, ">=": z3.Or(gt, eq)}[op]
+
+
+def _encode_numeric(cond: Condition, ctx: Context, stmt: Statement, base: str, if_exists: bool) -> z3.BoolRef:
+    """Numeric operators as AWS evaluates them (finding 9): exact decimals; an invalid request value makes the
+    condition false in either polarity; invalid policy values never match; absent keys as for any operator."""
+    parsed = [parse_number(v) for v in cond.values]
+    if any(b is UNMODELLED for b in parsed):
+        return ctx.opaque(stmt, f"number outside the model in {cond.operator} {cond.key}")
+    bounds = [b for b in parsed if isinstance(b, Fraction)]
+    places = max((decimal_places(b) for b in bounds), default=0)
+    op = NUMERIC_OPS[base]
+    present = ctx.present(cond.key)
+    # Other valid spellings (+5, 1e1, Unicode digits) are left to an opaque, placed positively in either polarity.
+    reason = f"number spelled other than as a plain decimal in {cond.operator} {cond.key}"
+    pinned = ctx._fixed(cond.key.lower())
+    if pinned is not _FREE:
+        # A known value is read here, in Python: no string reasoning for the solver.
+        number = request_number(pinned) if isinstance(pinned, str) else None
+        if isinstance(number, Fraction):
+            hit = any(_PY_COMPARE[op](number, b) for b in bounds)
+            inner: z3.BoolRef = z3.BoolVal(hit != is_negated(base))
+        else:
+            inner = ctx.opaque(stmt, reason) if number is UNMODELLED else z3.BoolVal(False)
+    else:
+        value = ctx.string(cond.key)
+        loose, plain = _number_res()
+        if bounds:
+            scaled = _scaled(ctx.number_parts(cond.key), places)
+            matched: z3.BoolRef = _any([_numeric_compare(op, scaled, int(b * 10**places)) for b in bounds])
+        else:
+            matched = z3.BoolVal(False)
+        decided = z3.Not(matched) if is_negated(base) else matched
+        unknown = ctx.opaque(stmt, reason)
+        inner = z3.If(z3.InRe(value, plain), decided, z3.If(z3.InRe(value, loose), unknown, z3.BoolVal(False)))
+    if is_negated(base) or if_exists:
+        return z3.Or(z3.Not(present), inner)
+    return z3.And(present, inner)
+
+
 def encode_condition(cond: Condition, ctx: Context, stmt: Statement) -> z3.BoolRef:
     op = cond.operator
     if_exists = op.endswith("IfExists")
@@ -374,20 +476,7 @@ def encode_condition(cond: Condition, ctx: Context, stmt: Statement) -> z3.BoolR
         return wrap_presence(base, if_exists, present, _string_match(STRING_OPS[base], value, cond.values))
 
     if base in NUMERIC_OPS and kind == "string":
-        bounds = [parse_int(v) for v in cond.values]
-        if any(b is None for b in bounds):
-            return ctx.opaque(stmt, f"non-integer value in {op} {cond.key}")
-        present, value = ctx.present(cond.key), ctx.string(cond.key)
-        number = z3.StrToInt(value)
-        matched = _any([_compare(NUMERIC_OPS[base], number, b) for b in bounds if b is not None])
-        # Request values that are not plain digit strings are left to an
-        # opaque, placed so it occurs positively in either polarity.
-        digits = z3.InRe(value, z3.Plus(z3.Range("0", "9")))
-        unknown = ctx.opaque(stmt, f"non-integer request value for {op} {cond.key}")
-        if is_negated(base):
-            return z3.Or(z3.Not(present), z3.If(digits, z3.Not(matched), unknown))
-        inner = z3.If(digits, matched, unknown)
-        return z3.Or(z3.Not(present), inner) if if_exists else z3.And(present, inner)
+        return _encode_numeric(cond, ctx, stmt, base, if_exists)
 
     if base in DATE_OPS and kind == "time":
         moments = [parse_time(v) for v in cond.values]

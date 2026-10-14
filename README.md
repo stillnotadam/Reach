@@ -178,6 +178,8 @@ Alerts keep their identity when lines move, and no secret value is ever written 
     AWS's rules for mixed families, IPv4-mapped sources and malformed networks measured on its simulator; time keys
     are epoch seconds, and `aws:CurrentTime` and `aws:EpochTime` share one clock, so a policy cannot be satisfied by
     two inconsistent times.
+- Numeric operators as AWS does them, measured: BigDecimal syntax (`1e1`, `-0.5`, `007`), exact comparison (no
+  floating point), and an invalid value failing every operator, `NumericNotEquals` included.
 - `StringEqualsIgnoreCase` as AWS does it, measured: equal full Unicode lowercase forms (the Kelvin sign matches
   `k`; long s does not match `s`, although Java's `equalsIgnoreCase` says it does).
 - The principal's own context is pinned: `aws:PrincipalArn`, `aws:PrincipalAccount`, `aws:PrincipalTag/*`,
@@ -191,7 +193,8 @@ Alerts keep their identity when lines move, and no secret value is ever written 
 
 These are always reported as `UNKNOWN` rather than guessed: set operators with numeric, date, IP or `Bool` operators,
 or with `IfExists`; multi-valued keys without a set operator; policy variables over IP, time or multi-valued keys or
-inside ARN operators; IP networks AWS cannot parse, when the key is present; decimal or signed numbers; `Binary*`.
+inside ARN operators; IP networks AWS cannot parse, when the key is present; numbers spelled other than as a plain
+decimal in a request (`+5`, `1e1`, non-ASCII digits); `Binary*`.
 Whether a `Principal: "*"` grant is capped by a permissions boundary or session policy is reported as `UNKNOWN` until verified against AWS. See the [roadmap](ROADMAP.md).
 
 ## How Reach checks itself

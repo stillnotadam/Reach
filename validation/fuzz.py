@@ -32,7 +32,7 @@ from reach.conditions import ContextValue
 from reach.engine import Environment, Principal, Query, ResourcePolicy, Verdict, decide
 from reach.policy import Policy, parse_policy
 from reach.reference import Tri, _arn, _glob, evaluate
-from reach.values import render_time
+from reach.values import BOOLEAN_KEYS, render_time
 
 ACCOUNT = "123456789012"
 PRINCIPALS = [f"arn:aws:iam::{ACCOUNT}:role/app-1", f"arn:aws:iam::{ACCOUNT}:user/alice"]
@@ -83,7 +83,7 @@ KEYS = {
     "aws:MultiFactorAuthPresent": ["true", "false"],
     "aws:RequestedRegion": ["eu-west-1", "us-east-1"],
     "s3:prefix": ["home/", "home/a", "home/k", "tmp/"],
-    "s3:max-keys": ["5", "10", "0100", "500", "abc", "1.5"],
+    "s3:max-keys": ["5", "10", "0100", "500", "abc", "1.5", "-2", "10.50", "+5", "1e1", " 5", "-0.25"],
 }
 SOURCE_IPS = ["10.1.2.3", "192.168.1.7", "192.168.2.1", "8.8.8.8", "2001:db8::5", "2001:db8:5::1", "2001:db9::1",
               "::ffff:10.1.2.3"]  # fmt: skip
@@ -158,7 +158,11 @@ def _condition(rng: random.Random) -> tuple[str, str, list[str]]:
         return "Null", rng.choice(keys), [rng.choice(["true", "false"])]
     if roll < 0.27:
         op = f"Numeric{rng.choice(COMPARISONS)}{if_exists}"
-        return op, "s3:max-keys", rng.sample(["10", "100", "10.5", "0"], k=rng.randint(1, 2))
+        return (
+            op,
+            "s3:max-keys",
+            rng.sample(["10", "100", "10.5", "0", "-1", "1e1", "abc", "0.25", "007"], k=rng.randint(1, 2)),
+        )
     if roll < 0.37:
         op = rng.choice(["IpAddress", "NotIpAddress"]) + if_exists
         return op, "aws:SourceIp", rng.sample(NETWORKS, k=rng.randint(1, 2))
@@ -253,7 +257,9 @@ def random_case(rng: random.Random) -> Case:
 def random_context(rng: random.Random) -> dict[str, ContextValue]:
     ctx: dict[str, ContextValue] = {}
     for key, values in KEYS.items():
-        ctx[key] = None if rng.random() < 0.3 else rng.choice([*values, *SPELLINGS.get(key, []), "other"])
+        # AWS sets its boolean keys to "true" or "false" only, and Reach's proofs assume so (seed 72, case 424).
+        other = [] if key.lower() in BOOLEAN_KEYS else [*SPELLINGS.get(key, []), "other"]
+        ctx[key] = None if rng.random() < 0.3 else rng.choice([*values, *other])
     # Every real request goes to some region (found by the AWS simulator harness).
     ctx["aws:RequestedRegion"] = rng.choice([*KEYS["aws:RequestedRegion"], "other"])
     ctx["aws:SourceIp"] = None if rng.random() < 0.2 else rng.choice(SOURCE_IPS)

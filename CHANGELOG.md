@@ -11,6 +11,9 @@
   subagent descriptions are checked by Reach itself (secrets plus concealment, override phrasing, shadowing,
   `<IMPORTANT>` blocks); whole files are scanned with Husk when installed (`reach-security[husk]`). Planted
   instructions complete the trifecta's untrusted-input leg with no human gate. SARIF rules REACH005 and REACH006.
+- Numeric operators: decimals, signs, exponents and leading zeros, compared exactly as AWS does (BigDecimal, not
+  floating point). An invalid request value makes every Numeric operator false, as measured
+  (`validation/num_probe.py`, finding 9: 1,615 cases, 0 disagreements).
 - IPv6: IP keys are 128-bit, so IPv6 networks and sources are decided exactly. Mixed families, IPv4-mapped sources
   and malformed networks follow AWS as measured with `validation/ip_probe.py` (finding 7: 460 cases, 0
   disagreements). A malformed network is now decided exactly when the key is absent.

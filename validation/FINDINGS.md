@@ -93,6 +93,29 @@ hand and then checked against AWS. Each one is either a Reach bug that is now fi
 - **Result:** 42 compared, 0 disagreements. Tests: `test_string_equals_ignore_case_compares_lowercase_forms`,
   `test_ignore_case_denies_are_proofs_over_every_spelling`, `test_ignore_case_set_operator_and_text_iam_rejects`.
 
+### 9. Numeric operators read BigDecimal syntax and compare exactly
+
+- **Before:** only non-negative integers were modelled; a decimal or signed value made the condition UNKNOWN.
+- **Probe:** `validation/num_probe.py`, 2,090 simulator calls (plus 70 exploratory ones): five operators, 19
+  policy value lists, 22 request values. What AWS does:
+  - numbers follow Java's BigDecimal syntax: a sign, a leading or trailing point (`.5`, `5.`), an exponent
+    (`1e1`, `1E-1`, `1e+1`) and leading zeros (`007`) are fine; whitespace, hex (`0x10`, `0x1p3`), `1d`,
+    `Infinity`, `NaN`, `1_000` and `1,000` are not;
+  - comparison is exact, not floating point: `9007199254740993` is not `9007199254740992`, and
+    `0.10000000000000000001` is greater than `0.1`;
+  - a request value may use any Unicode decimal digit (`١٠` equals `10`); IAM rejects such text in a policy;
+  - an invalid request value makes every Numeric operator false, `NumericNotEquals` and the `IfExists` forms
+    included; an invalid policy value just never matches (`["abc", "10"]` still matches `10`, and
+    `NumericNotEquals: "abc"` is true for any valid number); an absent key behaves as for any operator.
+- **Model:** a request value that is a plain decimal (`-12.50`) is decided exactly: it is split into sign, whole
+  and fraction digits and read on the grid of the policy bounds' decimal places, with a flag for digits cut off
+  below it, so every comparison is linear integer arithmetic. Other spellings that may be valid (`+5`, `1e1`,
+  non-ASCII digits) are UNKNOWN in both evaluators; anything else is invalid and decided as false.
+- **Found on the way:** the fuzzer gave `aws:MultiFactorAuthPresent` the value `other`, which AWS never sends and
+  Reach's proofs rightly exclude (seed 72, case 424). The fuzzer now keeps boolean keys to `true`/`false`.
+- **Result:** 1,615 cases decided by Reach and compared, 0 disagreements. Tests: `test_numbers_are_exact_decimals`,
+  `test_free_decimal_and_negative_witnesses`, `test_invalid_numbers_make_every_numeric_operator_false`.
+
 ## Modelling gaps (fixed with AWS's Service Authorization Reference)
 
 ### 2. Actions apply only to their own resource types
@@ -169,3 +192,5 @@ hand and then checked against AWS. Each one is either a Reach bug that is now fi
 | ip_probe | 684 | 460 | 0 | finding 7: IPv6, mixed families, mapped sources, malformed networks |
 | case_probe | 42 | 42 | 0 | finding 8: StringEqualsIgnoreCase and its Unicode edge cases |
 | 51 | 600 | 320 | 0 | random cases with IPv6 networks and sources, malformed networks |
+| num_probe | 2090 | 1615 | 0 | finding 9: decimals, signs, exponents, precision, invalid values |
+| 81 | 500 | 282 | 0 | random cases with decimal, signed, exponent and invalid numbers |

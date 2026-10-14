@@ -25,6 +25,7 @@ from __future__ import annotations
 import operator
 import re
 from collections.abc import Iterable
+from fractions import Fraction
 from functools import lru_cache
 
 from .conditions import ContextValue, is_multivalued
@@ -36,13 +37,15 @@ from .values import (
     RCP_EXEMPT_ACTIONS,
     RCP_SERVICES,
     TIME_KEYS,
+    UNMODELLED,
     ignore_case_equal,
     parse_bool,
-    parse_int,
     parse_ip,
     parse_ip_network,
+    parse_number,
     parse_time,
     principal_type,
+    request_number,
     username,
 )
 from .variables import literal, resolve_statement
@@ -134,8 +137,9 @@ def _modelled(base: str, kind: str, values: tuple[str, ...]) -> bool:
     fam = _family(base)
     if fam is not None:
         family, _ = fam
-        parse = parse_int if family == "Numeric" else parse_time
-        return kind == ("string" if family == "Numeric" else "time") and all(parse(v) is not None for v in values)
+        if family == "Numeric":
+            return kind == "string" and all(parse_number(v) is not UNMODELLED for v in values)
+        return kind == "time" and all(parse_time(v) is not None for v in values)
     if base in ("IpAddress", "NotIpAddress"):
         return kind == "ip" and all(parse_ip_network(v) is not None for v in values)
     return False
@@ -156,12 +160,17 @@ def _hit(base: str, value: str, values: tuple[str, ...]) -> Tri:
     fam = _family(base)
     if fam is not None:
         family, comparison = fam
-        parse = parse_int if family == "Numeric" else parse_time
-        actual = parse(value)
-        if actual is None:
-            return None  # e.g. a decimal or signed number: not modelled
-        bounds = [b for b in (parse(v) for v in values) if b is not None]  # _modelled already rejected None
-        return any(_COMPARE[comparison](actual, b) for b in bounds)
+        if family == "Numeric":
+            number = request_number(value)
+            if not isinstance(number, Fraction):
+                return None  # _numeric decides invalid values; other spellings are not modelled
+            limits = [b for b in (parse_number(v) for v in values) if isinstance(b, Fraction)]
+            return any(_COMPARE[comparison](number, b) for b in limits)
+        moment = parse_time(value)
+        if moment is None:
+            return None
+        bounds = [b for b in (parse_time(v) for v in values) if b is not None]  # _modelled already rejected None
+        return any(_COMPARE[comparison](moment, b) for b in bounds)
     address = parse_ip(value)
     if address is None:
         return None
@@ -188,6 +197,19 @@ def _set_condition(cond: Condition, req: Request, base: str, if_exists: bool) ->
     return _or(hits) if qualifier == "ForAnyValue" else _and(hits)
 
 
+def _numeric(base: str, if_exists: bool, value: ContextValue, values: tuple[str, ...]) -> Tri:
+    """Numeric operators as measured (finding 9): an invalid request value is false whatever the operator."""
+    negated = "Not" in base
+    if value is None:
+        return True if negated else if_exists
+    if not isinstance(value, str):
+        return None
+    if request_number(value) is None:
+        return False
+    hit = _hit(base, value, values)
+    return None if hit is None else (not hit if negated else hit)
+
+
 def _condition(cond: Condition, req: Request, variables: bool) -> Tri:
     op = cond.operator
     if_exists = op.endswith("IfExists")
@@ -202,6 +224,8 @@ def _condition(cond: Condition, req: Request, variables: bool) -> Tri:
     value = req.context.get(k)
     if base == "Null":
         return any((value is None) == (v.lower() == "true") for v in cond.values)
+    if base.startswith("Numeric") and kind == "string" and not is_multivalued(k) and _modelled(base, kind, cond.values):
+        return _numeric(base, if_exists, value, cond.values)
     if base in ("IpAddress", "NotIpAddress") and kind == "ip" and value is None:
         return True if "Not" in base else if_exists  # decided before AWS parses the networks
     if is_multivalued(k) or not _modelled(base, kind, cond.values):

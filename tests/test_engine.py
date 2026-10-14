@@ -248,33 +248,33 @@ def test_principal_arn_and_tags_are_fixed_from_the_principal():
 # --- three-valued soundness -----------------------------------------------------
 
 
-def numeric_allow():
-    # Decimal bounds are not modelled (only non-negative integers are).
-    return allow("s3:*", Condition={"NumericLessThan": {"s3:max-keys": "10.5"}})
+def unmodelled_allow():
+    # Binary* operators are not modelled.
+    return allow("s3:*", Condition={"BinaryEquals": {"s3:max-keys": "QUJD"}})
 
 
 def test_unmodelled_allow_condition_gives_unknown_not_allowed():
-    r = can([pol(numeric_allow())], "s3:ListBucket", "*")
+    r = can([pol(unmodelled_allow())], "s3:ListBucket", "*")
     assert r.verdict is Verdict.UNKNOWN
-    assert any("NumericLessThan" in a for a in r.assumptions)
+    assert any("BinaryEquals" in a for a in r.assumptions)
 
 
 def test_unmodelled_deny_condition_gives_unknown():
-    decimal_deny = deny("s3:*", Condition={"NumericGreaterThan": {"s3:max-keys": "10.5"}})
-    r = can([pol(allow("s3:*"), decimal_deny)], "s3:GetObject", "*")
+    binary_deny = deny("s3:*", Condition={"BinaryEquals": {"s3:max-keys": "QUJD"}})
+    r = can([pol(allow("s3:*"), binary_deny)], "s3:GetObject", "*")
     # The key only appears in an unmodelled condition, so it must not leak into the witness.
     assert "s3:max-keys" not in r.witness.context
     assert r.verdict is Verdict.UNKNOWN
 
 
 def test_unmodelled_condition_on_irrelevant_statement_still_proves():
-    p = [pol(numeric_allow(), allow("ec2:DescribeInstances"))]
+    p = [pol(unmodelled_allow(), allow("ec2:DescribeInstances"))]
     assert can(p, "ec2:DescribeInstances", "*").verdict is Verdict.ALLOWED
     assert can(p, "iam:CreateUser", "*").verdict is Verdict.DENIED
 
 
 def test_unmodelled_condition_beside_unconditional_grant_still_proves():
-    assert can([pol(numeric_allow(), allow("s3:ListBucket"))], "s3:ListBucket", "*").verdict is Verdict.ALLOWED
+    assert can([pol(unmodelled_allow(), allow("s3:ListBucket"))], "s3:ListBucket", "*").verdict is Verdict.ALLOWED
 
 
 # --- policy variables (IAM User Guide, "Policy variables") ---------------------------
@@ -405,22 +405,50 @@ def test_numeric_conditions():
     p = [pol(allow("s3:ListBucket", Condition={"NumericLessThanEquals": {"s3:max-keys": "100"}}))]
     r = can(p, "s3:ListBucket", "*")
     assert r.verdict is Verdict.ALLOWED
-    assert int(r.witness.context["s3:max-keys"]) <= 100
+    assert float(r.witness.context["s3:max-keys"]) <= 100  # any plain decimal, negative ones included
     assert can(p, "s3:ListBucket", "*", context={"s3:max-keys": "101"}).verdict is Verdict.DENIED
     assert can(p, "s3:ListBucket", "*", context={"s3:max-keys": "0100"}).verdict is Verdict.ALLOWED
 
 
-def test_non_integer_request_value_is_unknown_not_guessed():
-    p = [pol(allow("s3:ListBucket", Condition={"NumericLessThan": {"s3:max-keys": "10"}}))]
-    assert can(p, "s3:ListBucket", "*", context={"s3:max-keys": "1.5"}).verdict is Verdict.UNKNOWN
+def test_numbers_are_exact_decimals():
+    # Measured on AWS (validation/num_probe.py): BigDecimal syntax, compared exactly.
+    def keys(op, bound, value):
+        p = [pol(allow("s3:ListBucket", Condition={op: {"s3:max-keys": bound}}))]
+        return can(p, "s3:ListBucket", "*", context={"s3:max-keys": value}).verdict
+
+    assert keys("NumericLessThan", "10", "9.999") is Verdict.ALLOWED
+    assert keys("NumericLessThan", "10.5", "10.5000001") is Verdict.DENIED
+    assert keys("NumericEquals", "007", "7.00") is Verdict.ALLOWED
+    assert keys("NumericEquals", "1e1", "10") is Verdict.ALLOWED  # an exponent in the policy
+    assert keys("NumericEquals", "9007199254740993", "9007199254740992") is Verdict.DENIED  # not a double
+    assert keys("NumericGreaterThan", "-1.5", "-1.49") is Verdict.ALLOWED
+    assert keys("NumericLessThan", "0", "-0.001") is Verdict.ALLOWED
+    # A plain decimal is decided; other valid spellings are left UNKNOWN.
+    assert keys("NumericLessThan", "10", "+5") is Verdict.UNKNOWN
+    assert keys("NumericLessThan", "10", "١") is Verdict.UNKNOWN  # an Arabic-Indic digit
 
 
-def test_numeric_not_equals_keeps_opaque_positive():
-    # An Allow with NumericNotEquals: a non-digit value must give UNKNOWN, never ALLOWED.
+def test_free_decimal_and_negative_witnesses():
+    between = [pol(allow("s3:ListBucket", Condition={"NumericGreaterThan": {"s3:max-keys": "-2.5"},
+                                                     "NumericLessThan": {"s3:max-keys": "-2.4"}}))]  # fmt: skip
+    value = can(between, "s3:ListBucket", "*").witness.context["s3:max-keys"]
+    assert -2.5 < float(value) < -2.4
+
+
+def test_invalid_numbers_make_every_numeric_operator_false():
+    # AWS: an unparsable request value fails NumericNotEquals and the IfExists forms too.
     p = [pol(allow("s3:ListBucket", Condition={"NumericNotEquals": {"s3:max-keys": "5"}}))]
-    assert can(p, "s3:ListBucket", "*", context={"s3:max-keys": "x"}).verdict is Verdict.UNKNOWN
+    assert can(p, "s3:ListBucket", "*", context={"s3:max-keys": "x"}).verdict is Verdict.DENIED
+    assert can(p, "s3:ListBucket", "*", context={"s3:max-keys": " 5"}).verdict is Verdict.DENIED
     assert can(p, "s3:ListBucket", "*", context={"s3:max-keys": "5"}).verdict is Verdict.DENIED
     assert can(p, "s3:ListBucket", "*", context={"s3:max-keys": None}).verdict is Verdict.ALLOWED
+    if_exists = [pol(allow("s3:ListBucket", Condition={"NumericLessThanIfExists": {"s3:max-keys": "10"}}))]
+    assert can(if_exists, "s3:ListBucket", "*", context={"s3:max-keys": "abc"}).verdict is Verdict.DENIED
+    # An invalid policy value never matches; the valid ones around it still do.
+    mixed = [pol(allow("s3:ListBucket", Condition={"NumericEquals": {"s3:max-keys": ["abc", "10"]}}))]
+    assert can(mixed, "s3:ListBucket", "*", context={"s3:max-keys": "10"}).verdict is Verdict.ALLOWED
+    never = [pol(allow("s3:ListBucket", Condition={"NumericNotEquals": {"s3:max-keys": "abc"}}))]
+    assert can(never, "s3:ListBucket", "*", context={"s3:max-keys": "7"}).verdict is Verdict.ALLOWED
 
 
 def test_ip_conditions():

@@ -24,6 +24,8 @@ from __future__ import annotations
 import datetime as dt
 import ipaddress
 import re
+from decimal import Decimal
+from fractions import Fraction
 
 IP_KEYS = frozenset({"aws:sourceip", "aws:vpcsourceip"})
 
@@ -88,8 +90,60 @@ _DATE_FORMATS = ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%MZ
 
 
 def parse_int(text: str) -> int | None:
-    """Non-negative integer literals only; decimals and signs are left unmodelled."""
+    """Non-negative integer literals (epoch seconds; the simulator harness's numeric context type)."""
     return int(text) if _INT.fullmatch(text) else None
+
+
+# --- numbers (Numeric* operators) ----------------------------------------------------------------------------
+#
+# Measured on AWS (validation/FINDINGS.md, finding 9): numbers are read with Java BigDecimal syntax and compared
+# exactly. A sign, a leading or trailing point, an exponent and leading zeros are fine; whitespace, hex, `1d`,
+# `Infinity` and `1_000` are not. A request value may use any Unicode decimal digit (`١٠` is 10). An invalid
+# request value makes every Numeric operator false, negated or not; an invalid policy value never matches.
+#
+# Reach decides plain decimals exactly (`-12.50`): CANONICAL. Other valid spellings of a request value (`+5`,
+# `1e1`, `.5`, Unicode digits) are left unmodelled rather than parsed symbolically.
+
+# In a str pattern \d is any Unicode decimal digit, which is what BigDecimal accepts.
+NUMBER = re.compile(r"[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?")
+CANONICAL_NUMBER = re.compile(r"-?[0-9]+(\.[0-9]+)?")
+MAX_EXPONENT = 1000  # larger exponents are valid for AWS but not worth an exact model here
+UNMODELLED = object()
+
+
+def parse_number(text: str) -> Fraction | object | None:
+    """A policy value for a Numeric operator: its exact value, None if AWS rejects it (it never matches), or
+    UNMODELLED (non-ASCII digits, which IAM cannot store in a policy anyway, or a huge exponent)."""
+    if not NUMBER.fullmatch(text):
+        return None
+    if not text.isascii():
+        return UNMODELLED
+    _, _, exponent = text.lower().partition("e")
+    if exponent and abs(int(exponent)) > MAX_EXPONENT:
+        return UNMODELLED
+    return Fraction(Decimal(text))
+
+
+# NUMBER with any non-ASCII character standing in for a digit: a superset of the valid numbers that a solver
+# handles far faster than Unicode's ~70 digit ranges. Strings it adds are rejected by AWS but only ever made
+# UNKNOWN here, never decided.
+LOOSE_NUMBER = re.compile(r"[+-]?(D+(\.D*)?|\.D+)([eE][+-]?D+)?".replace("D", "[0-9\u0080-\U0010ffff]"))
+
+
+def request_number(text: str) -> Fraction | object | None:
+    """A request value under a Numeric operator: exact for plain decimals, None if AWS rejects it (every
+    Numeric operator is then false), UNMODELLED for other spellings that may be valid (LOOSE_NUMBER)."""
+    if CANONICAL_NUMBER.fullmatch(text):
+        return Fraction(Decimal(text))
+    return UNMODELLED if LOOSE_NUMBER.fullmatch(text) else None
+
+
+def decimal_places(value: Fraction) -> int:
+    """Digits after the point a decimal needs: 0.25 -> 2, 10 -> 0, 1e-3 -> 3."""
+    places = 0
+    while (value * 10**places).denominator != 1:
+        places += 1
+    return places
 
 
 def parse_time(text: str) -> int | None:
