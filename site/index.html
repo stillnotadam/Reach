@@ -5,335 +5,410 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Reach: prove what credentials can reach</title>
 <meta name="description" content="Open-source tool that proves what cloud credentials, and the AI agents holding them, can actually reach in AWS. Z3-backed IAM reasoning, validated against AWS's own policy simulator.">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231c1d1f'/%3E%3Cpath d='M9 23V9h7.5a4.5 4.5 0 0 1 0 9H9m7-0 6 5' stroke='%2363d6a0' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23000'/%3E%3Cpath d='M16 7 25 23H7z' fill='%23fff'/%3E%3C/svg%3E">
 <style>
 :root {
-  --bg: #f6f6f3; --panel: #ffffff; --ink: #18191b; --muted: #61646b; --line: #e3e3de; --soft: #efefea;
-  --accent: #127a52; --accent-ink: #ffffff; --allow: #c2362f; --deny: #1f7a4a; --unknown: #946200;
-  --term-bg: #15171a; --term-ink: #d8dbe0; --term-dim: #7d838c;
-  --mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, monospace;
-  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --bg: #ffffff; --bg2: #fafafa; --fg: #0a0a0a; --fg2: #525252; --fg3: #8f8f8f;
+  --line: #ebebeb; --line2: #e0e0e0; --hover: #f4f4f4; --code: #fafafa;
+  --btn: #0a0a0a; --btn-fg: #ffffff;
+  --allow: #e5484d; --deny: #30a46c; --unknown: #f5a524; --blue: #0070f3;
+  --grid: rgba(0, 0, 0, 0.055);
+  --sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "Geist Mono", ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #0f1012; --panel: #17181b; --ink: #e9e9e6; --muted: #9a9da4; --line: #2a2c30; --soft: #1d1f22;
-    --accent: #63d6a0; --accent-ink: #0c2a1d; --allow: #ff7d72; --deny: #6fcf98; --unknown: #f2c35b;
-    --term-bg: #0b0c0e; color-scheme: dark;
+    --bg: #000000; --bg2: #0a0a0a; --fg: #ededed; --fg2: #a1a1a1; --fg3: #6e6e6e;
+    --line: #1f1f1f; --line2: #2e2e2e; --hover: #141414; --code: #0a0a0a;
+    --btn: #ededed; --btn-fg: #0a0a0a; --grid: rgba(255, 255, 255, 0.06); color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-  --bg: #0f1012; --panel: #17181b; --ink: #e9e9e6; --muted: #9a9da4; --line: #2a2c30; --soft: #1d1f22;
-  --accent: #63d6a0; --accent-ink: #0c2a1d; --allow: #ff7d72; --deny: #6fcf98; --unknown: #f2c35b;
-  --term-bg: #0b0c0e; color-scheme: dark;
+  --bg: #000000; --bg2: #0a0a0a; --fg: #ededed; --fg2: #a1a1a1; --fg3: #6e6e6e;
+  --line: #1f1f1f; --line2: #2e2e2e; --hover: #141414; --code: #0a0a0a;
+  --btn: #ededed; --btn-fg: #0a0a0a; --grid: rgba(255, 255, 255, 0.06); color-scheme: dark;
 }
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
-body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.6 var(--sans); }
-a { color: inherit; }
-.wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
-code { font: 0.92em var(--mono); background: var(--soft); border: 1px solid var(--line); border-radius: 5px; padding: 0 5px; }
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
+a { color: inherit; text-decoration: none; }
+.container { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
+.mono { font-family: var(--mono); }
 
-nav { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--bg) 88%, transparent);
-  backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
-nav .wrap { display: flex; align-items: center; gap: 22px; height: 56px; }
-.brand { display: flex; align-items: center; gap: 9px; font-weight: 700; text-decoration: none; letter-spacing: -0.01em; }
-.brand svg { width: 24px; height: 24px; }
-nav .links { margin-left: auto; display: flex; gap: 18px; font-size: 14.5px; }
-nav .links a { text-decoration: none; color: var(--muted); }
-nav .links a:hover { color: var(--ink); }
-@media (max-width: 640px) { nav .links .opt { display: none; } }
+/* nav */
+nav { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--bg) 80%, transparent);
+  backdrop-filter: saturate(180%) blur(12px); border-bottom: 1px solid var(--line); }
+nav .container { display: flex; align-items: center; height: 60px; gap: 28px; }
+.logo { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 16px; letter-spacing: -0.02em; }
+.logo svg { width: 22px; height: 22px; }
+.navlinks { display: flex; gap: 22px; font-size: 14px; color: var(--fg2); }
+.navlinks a:hover { color: var(--fg); }
+.navright { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+@media (max-width: 720px) { .navlinks { display: none; } }
 
-header.hero { padding: 72px 0 40px; }
-.eyebrow { font: 600 12.5px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
-h1 { font-size: clamp(34px, 6vw, 58px); line-height: 1.05; letter-spacing: -0.03em; margin: 14px 0 20px; max-width: 880px; }
-.lede { font-size: clamp(17px, 2.2vw, 19.5px); color: var(--muted); max-width: 780px; margin: 0 0 30px; }
-.cta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
-.btn { display: inline-flex; align-items: center; gap: 8px; padding: 11px 18px; border-radius: 9px; font-weight: 600;
-  font-size: 15px; text-decoration: none; border: 1px solid var(--line); background: var(--panel); }
-.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
-.btn:hover { filter: brightness(1.05); }
-.install { display: inline-flex; align-items: center; gap: 10px; font: 14.5px var(--mono); background: var(--term-bg);
-  color: var(--term-ink); padding: 10px 10px 10px 16px; border-radius: 9px; max-width: 100%; }
-.install span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.install button { font: 600 12px var(--sans); color: var(--term-ink); background: #2a2d33; border: 0; border-radius: 6px;
-  padding: 5px 10px; cursor: pointer; }
-.badges { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 26px; color: var(--muted); font-size: 14px; }
-.badges b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 40px; padding: 0 16px;
+  border-radius: 999px; font: 500 14px var(--sans); border: 1px solid var(--line2); background: var(--bg); color: var(--fg);
+  transition: background .15s, border-color .15s; white-space: nowrap; cursor: pointer; }
+.btn:hover { background: var(--hover); }
+.btn.solid { background: var(--btn); color: var(--btn-fg); border-color: var(--btn); }
+.btn.solid:hover { opacity: .88; }
+.btn.sm { height: 34px; padding: 0 13px; font-size: 13.5px; }
+.btn svg { width: 16px; height: 16px; }
 
-section { padding: 56px 0; border-top: 1px solid var(--line); }
-h2 { font-size: clamp(25px, 3.4vw, 34px); letter-spacing: -0.02em; line-height: 1.15; margin: 0 0 12px; }
-.sub { color: var(--muted); max-width: 760px; margin: 0 0 30px; }
-.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; align-items: start; }
-@media (max-width: 860px) { .grid3, .grid2 { grid-template-columns: 1fr; } }
-.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
-.card h3 { margin: 0 0 6px; font-size: 17px; display: flex; align-items: center; gap: 10px; }
-.card p { margin: 0; color: var(--muted); font-size: 15px; }
-.tag { font: 700 12px var(--mono); padding: 3px 8px; border-radius: 6px; letter-spacing: 0.02em; }
-.tag.allow { color: var(--allow); background: color-mix(in srgb, var(--allow) 13%, transparent); }
-.tag.deny { color: var(--deny); background: color-mix(in srgb, var(--deny) 13%, transparent); }
-.tag.unknown { color: var(--unknown); background: color-mix(in srgb, var(--unknown) 15%, transparent); }
+/* hero */
+.hero { position: relative; overflow: hidden; padding: 96px 0 0; text-align: center; }
+.hero::before { content: ""; position: absolute; inset: 0; z-index: -1;
+  background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 64px 64px; background-position: center top;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000 30%, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000 30%, transparent 75%); }
+.pill { display: inline-flex; align-items: center; gap: 8px; height: 30px; padding: 0 12px 0 6px; border: 1px solid var(--line2);
+  border-radius: 999px; font-size: 13px; color: var(--fg2); background: var(--bg); }
+.pill b { font: 500 11.5px var(--mono); color: var(--fg); background: var(--hover); border: 1px solid var(--line2);
+  border-radius: 999px; padding: 1px 8px; }
+.pill:hover { border-color: var(--fg3); }
+h1 { font-size: clamp(38px, 7vw, 72px); line-height: 1.02; letter-spacing: -0.045em; font-weight: 600;
+  margin: 26px auto 22px; max-width: 900px;
+  background: linear-gradient(180deg, var(--fg) 30%, color-mix(in srgb, var(--fg) 62%, var(--bg)));
+  -webkit-background-clip: text; background-clip: text; color: transparent; }
+.lede { font-size: clamp(16px, 2.1vw, 19px); line-height: 1.6; color: var(--fg2); max-width: 680px; margin: 0 auto 34px; }
+.actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.install { display: inline-flex; align-items: center; gap: 12px; margin-top: 22px; height: 40px; padding: 0 6px 0 16px;
+  border: 1px solid var(--line2); border-radius: 10px; background: var(--code); font: 13.5px var(--mono); color: var(--fg2);
+  max-width: 100%; }
+.install .dollar { color: var(--fg3); }
+.install code { color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.copy { height: 28px; width: 28px; border: 0; border-radius: 6px; background: transparent; color: var(--fg3); cursor: pointer;
+  display: grid; place-items: center; }
+.copy:hover { background: var(--hover); color: var(--fg); }
+.copy svg { width: 15px; height: 15px; }
 
-.term { background: var(--term-bg); color: var(--term-ink); border-radius: 12px; overflow: hidden; border: 1px solid #23262b; }
-.term .bar { display: flex; gap: 6px; padding: 10px 14px; background: #1b1d21; }
-.term .bar i { width: 10px; height: 10px; border-radius: 50%; background: #3a3d44; }
-.term pre { margin: 0; padding: 16px 18px; font: 13px/1.6 var(--mono); overflow-x: auto; white-space: pre; }
-.term .p { color: var(--term-dim); } .term .r { color: #ff7d72; font-weight: 700; } .term .g { color: #6fcf98; font-weight: 700; }
-.term .y { color: #f2c35b; font-weight: 700; } .term .d { color: var(--term-dim); }
+/* product frame */
+.frame-wrap { position: relative; margin: 72px auto 0; max-width: 1080px; padding: 0 16px; }
+.frame-wrap::before { content: ""; position: absolute; left: 10%; right: 10%; top: -40px; height: 200px; z-index: -1;
+  background: radial-gradient(ellipse at center, color-mix(in srgb, var(--fg) 10%, transparent), transparent 70%); filter: blur(40px); }
+.frame { border: 1px solid var(--line2); border-radius: 14px; overflow: hidden; background: var(--bg);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 3%, transparent), 0 30px 80px -20px rgba(0, 0, 0, .25); }
+.frame-bar { display: flex; align-items: center; gap: 12px; height: 42px; padding: 0 14px; border-bottom: 1px solid var(--line);
+  background: var(--bg2); }
+.dots { display: flex; gap: 7px; } .dots i { width: 11px; height: 11px; border-radius: 50%; background: var(--line2); }
+.url { flex: 1; max-width: 420px; margin: 0 auto; height: 26px; border-radius: 7px; border: 1px solid var(--line);
+  background: var(--bg); font: 12px/24px var(--mono); color: var(--fg3); text-align: center; overflow: hidden;
+  white-space: nowrap; text-overflow: ellipsis; padding: 0 10px; }
+.frame-bar a { font-size: 12.5px; color: var(--fg2); white-space: nowrap; }
+.frame-bar a:hover { color: var(--fg); }
+.frame iframe { display: block; width: 100%; height: 620px; border: 0; background: var(--bg); }
+@media (max-width: 640px) { .frame iframe { height: 540px; } .url { display: none; } }
 
-.pipeline { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; counter-reset: step; }
-@media (max-width: 960px) { .pipeline { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 560px) { .pipeline { grid-template-columns: 1fr; } }
-.step { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; position: relative; }
-.step::before { counter-increment: step; content: counter(step); font: 700 12px var(--mono); color: var(--accent);
-  border: 1px solid var(--line); border-radius: 6px; padding: 1px 7px; }
-.step h4 { margin: 10px 0 6px; font-size: 15.5px; }
-.step p { margin: 0; font-size: 14px; color: var(--muted); }
+/* stats */
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  margin-top: 96px; }
+.stats > div { padding: 30px 24px; border-left: 1px solid var(--line); }
+.stats > div:first-child { border-left: 0; }
+.stats b { display: block; font-size: 32px; font-weight: 600; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+.stats span { font-size: 13.5px; color: var(--fg2); }
+@media (max-width: 760px) { .stats { grid-template-columns: 1fr 1fr; } .stats > div:nth-child(3) { border-left: 0; }
+  .stats > div:nth-child(n+3) { border-top: 1px solid var(--line); } }
 
-.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 26px; }
-@media (max-width: 860px) { .stats { grid-template-columns: 1fr 1fr; } }
-.stat { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
-.stat b { display: block; font-size: 28px; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
-.stat span { color: var(--muted); font-size: 14px; }
-.findings { width: 100%; border-collapse: collapse; font-size: 14.5px; background: var(--panel); border: 1px solid var(--line);
-  border-radius: 12px; overflow: hidden; }
-.findings th, .findings td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
-.findings th { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); background: var(--soft); }
-.findings tr:last-child td { border-bottom: 0; }
-.findings td:first-child { font: 600 13px var(--mono); color: var(--accent); white-space: nowrap; }
-.tablewrap { overflow-x: auto; border-radius: 12px; }
+/* sections */
+section { padding: 112px 0 0; }
+.kicker { font: 500 12.5px var(--mono); color: var(--fg3); text-transform: uppercase; letter-spacing: 0.08em; }
+h2 { font-size: clamp(28px, 4.2vw, 44px); line-height: 1.08; letter-spacing: -0.035em; font-weight: 600; margin: 12px 0 14px; max-width: 760px; }
+.sub { color: var(--fg2); font-size: 16.5px; max-width: 640px; margin: 0 0 44px; }
 
-.demo { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--panel); }
-.demo .bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px;
-  border-bottom: 1px solid var(--line); font-size: 14px; color: var(--muted); flex-wrap: wrap; }
-.demo iframe { display: block; width: 100%; height: 780px; border: 0; background: var(--bg); }
-@media (max-width: 640px) { .demo iframe { height: 620px; } }
+/* bento */
+.bento { display: grid; grid-template-columns: repeat(6, 1fr); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.cell { padding: 30px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--bg); }
+.cell.w2 { grid-column: span 2; } .cell.w3 { grid-column: span 3; } .cell.w4 { grid-column: span 4; }
+.cell.end { border-right: 0; } .cell.last { border-bottom: 0; }
+.cell h3 { margin: 14px 0 6px; font-size: 16.5px; font-weight: 600; letter-spacing: -0.015em; }
+.cell p { margin: 0; color: var(--fg2); font-size: 14.5px; }
+.icon { width: 34px; height: 34px; border-radius: 9px; border: 1px solid var(--line2); display: grid; place-items: center; color: var(--fg); }
+.icon svg { width: 17px; height: 17px; }
+.verdicts { display: flex; flex-direction: column; gap: 8px; margin-top: 22px; }
+.verdict { display: flex; align-items: center; gap: 12px; padding: 11px 14px; border: 1px solid var(--line); border-radius: 10px;
+  font-size: 13.5px; color: var(--fg2); background: var(--bg2); }
+.verdict .t { font: 600 11.5px var(--mono); letter-spacing: .02em; min-width: 66px; }
+.t.a { color: var(--allow); } .t.d { color: var(--deny); } .t.u { color: var(--unknown); }
+@media (max-width: 900px) { .bento { grid-template-columns: 1fr; } .cell, .cell.w2, .cell.w3, .cell.w4 { grid-column: auto; border-right: 0; }
+  .cell.last { border-bottom: 1px solid var(--line); } .cell:last-child { border-bottom: 0; } }
 
-ul.points { margin: 0; padding-left: 20px; color: var(--muted); }
-ul.points li { margin: 6px 0; }
-ul.points b { color: var(--ink); }
-footer { border-top: 1px solid var(--line); padding: 30px 0 48px; color: var(--muted); font-size: 14px; }
-footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 24px; justify-content: space-between; }
+/* code tabs */
+.code { border: 1px solid var(--line2); border-radius: 14px; overflow: hidden; background: var(--code); }
+.tabs { display: flex; gap: 2px; padding: 8px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.tab { font: 500 13px var(--mono); color: var(--fg3); background: transparent; border: 0; border-radius: 7px; padding: 6px 12px;
+  cursor: pointer; white-space: nowrap; }
+.tab:hover { color: var(--fg); }
+.tab[aria-selected="true"] { color: var(--fg); background: var(--hover); box-shadow: inset 0 0 0 1px var(--line2); }
+.code pre { margin: 0; padding: 22px 24px; font: 13px/1.75 var(--mono); color: var(--fg); overflow-x: auto; white-space: pre; }
+.code pre[hidden] { display: none; }
+.c-p { color: var(--fg3); } .c-a { color: var(--allow); font-weight: 600; } .c-d { color: var(--deny); font-weight: 600; }
+.c-u { color: var(--unknown); font-weight: 600; } .c-m { color: var(--fg3); } .c-k { color: var(--blue); }
+
+/* table */
+.table { border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.row { display: grid; grid-template-columns: 180px 1fr; gap: 24px; padding: 18px 24px; border-bottom: 1px solid var(--line);
+  font-size: 14.5px; }
+.row:last-child { border-bottom: 0; }
+.row .k { font: 500 13px var(--mono); color: var(--fg); }
+.row .v { color: var(--fg2); }
+.row code, .cell code, .sub code { font: 12.5px var(--mono); color: var(--fg); background: var(--hover); border: 1px solid var(--line);
+  border-radius: 5px; padding: 1px 5px; }
+@media (max-width: 640px) { .row { grid-template-columns: 1fr; gap: 4px; } }
+.more { display: inline-flex; align-items: center; gap: 6px; margin-top: 20px; font-size: 14px; color: var(--fg2); }
+.more:hover { color: var(--fg); }
+
+/* cta + footer */
+.cta { margin-top: 128px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); text-align: center;
+  padding: 88px 16px; position: relative; overflow: hidden; }
+.cta::before { content: ""; position: absolute; inset: 0; z-index: -1;
+  background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 64px 64px; mask-image: radial-gradient(ellipse 60% 80% at 50% 50%, #000, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse 60% 80% at 50% 50%, #000, transparent 75%); }
+.cta h2 { margin: 0 auto 12px; }
+.cta .sub { margin: 0 auto 30px; }
+footer .container { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding-top: 28px;
+  padding-bottom: 44px; font-size: 13.5px; color: var(--fg3); }
+footer a:hover { color: var(--fg); }
+footer .links { display: flex; gap: 20px; }
 </style>
 </head>
 <body>
+
 <nav>
-  <div class="wrap">
-    <a class="brand" href="#">
-      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="currentColor" opacity=".9"/><path d="M9 23V9h7.5a4.5 4.5 0 0 1 0 9H9m7 0 6 5" stroke="var(--bg)" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  <div class="container">
+    <a class="logo" href="#" aria-label="Reach home">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 5 28 26H4z" fill="currentColor"/></svg>
       Reach
     </a>
-    <div class="links">
-      <a class="opt" href="#proofs">Proofs</a>
-      <a class="opt" href="#agents">Agents</a>
-      <a class="opt" href="#validation">Validation</a>
+    <div class="navlinks">
+      <a href="#features">Features</a>
+      <a href="#usage">Usage</a>
+      <a href="#validation">Validation</a>
       <a href="#demo">Demo</a>
-      <a href="https://github.com/ctrl-adam/Reach">GitHub</a>
+    </div>
+    <div class="navright">
+      <a class="btn sm" href="https://github.com/ctrl-adam/Reach">
+        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        GitHub
+      </a>
+      <a class="btn sm solid" href="#usage">Get started</a>
     </div>
   </div>
 </nav>
 
 <header class="hero">
-  <div class="wrap">
-    <div class="eyebrow">Open source &middot; AWS IAM &middot; AI agents</div>
-    <h1>Prove what cloud credentials, and the AI agents holding them, can actually reach.</h1>
-    <p class="lede">Reach turns AWS IAM policies into constraints for the Z3 solver. Every DENIED is a proof, and every
-      ALLOWED comes with a concrete request, re-checked by an independent evaluator and validated against AWS's own policy
-      simulator. Then it maps each AI agent to the credentials, tools and text it can reach, and flags the ones that can be
-      talked into sending your data out.</p>
-    <div class="cta">
-      <div class="install"><span id="cmd">pip install reach-security</span><button type="button" id="copy">Copy</button></div>
-      <a class="btn primary" href="#demo">Open the live demo</a>
-      <a class="btn" href="https://github.com/ctrl-adam/Reach">View on GitHub</a>
+  <div class="container">
+    <a class="pill" href="https://github.com/ctrl-adam/Reach/releases/tag/v0.2.1"><b>v0.2.1</b> Every IAM operator, measured against AWS &rarr;</a>
+    <h1>Prove what your cloud credentials can reach.</h1>
+    <p class="lede">Reach turns AWS IAM into constraints for the Z3 solver. Every DENIED is a proof, every ALLOWED comes
+      with a request that gets through, and the AI agents holding those credentials are checked for the lethal trifecta.</p>
+    <div class="actions">
+      <a class="btn solid" href="#usage">Get started</a>
+      <a class="btn" href="#demo">See a live report</a>
     </div>
-    <div class="badges">
-      <span><b>9,581</b> comparisons with AWS's simulator</span>
-      <span><b>10</b> AWS behaviours measured and documented</span>
-      <span><b>5,000</b> principals audited in <b>40.5 s</b></span>
-      <span>AGPL-3.0</span>
+    <div class="install">
+      <span class="dollar">$</span><code id="cmd">pip install reach-security</code>
+      <button class="copy" type="button" id="copy" aria-label="Copy install command">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+      </button>
+    </div>
+  </div>
+  <div class="frame-wrap" id="demo">
+    <div class="frame">
+      <div class="frame-bar">
+        <div class="dots"><i></i><i></i><i></i></div>
+        <div class="url">reach audit --authz synthetic-account.json --html</div>
+        <a href="demo/report.html" target="_blank" rel="noopener">Open &nearr;</a>
+      </div>
+      <iframe src="demo/report.html" title="Reach audit report of a synthetic account" loading="lazy"></iframe>
+    </div>
+  </div>
+  <div class="container">
+    <div class="stats">
+      <div><b>9,581</b><span>comparisons with AWS's policy simulator</span></div>
+      <div><b>0</b><span>open disagreements</span></div>
+      <div><b>40.5 s</b><span>to audit 5,000 principals</span></div>
+      <div><b>22,080</b><span>real AWS actions reasoned over</span></div>
     </div>
   </div>
 </header>
 
-<section id="proofs">
-  <div class="wrap">
-    <h2>Three verdicts, and none of them is a guess</h2>
-    <p class="sub">Policy linters match patterns. Reach asks the solver whether <em>any</em> request in the whole space
-      of actions, resources and request contexts gets through identity policies, permissions boundaries, SCPs, RCPs,
-      session policies and resource policies together.</p>
-    <div class="grid3">
-      <div class="card"><h3><span class="tag allow">ALLOWED</span></h3>
-        <p>Comes with a witness: the exact action, resource and context keys of a request that gets through. Before it is
-          shown, a second, solver-free evaluator replays it.</p></div>
-      <div class="card"><h3><span class="tag deny">DENIED</span></h3>
-        <p>A proof: no request satisfies the policies (UNSAT). Reach also says why: an explicit Deny, a boundary, an SCP
-          layer, or no grant at all.</p></div>
-      <div class="card"><h3><span class="tag unknown">UNKNOWN</span></h3>
-        <p>When an answer depends on something Reach does not model, it says so and names the assumption, instead of
-          rounding it to a yes or a no.</p></div>
+<section id="features">
+  <div class="container">
+    <div class="kicker">Features</div>
+    <h2>Answers you can check, not findings you have to trust.</h2>
+    <p class="sub">Reach asks whether any request, across every action, resource and request context, gets through
+      identity policies, boundaries, SCPs, RCPs, session policies and resource policies together.</p>
+    <div class="bento">
+      <div class="cell w3">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M9 12l2 2 4-4"/><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/></svg></div>
+        <h3>Three verdicts, no guesses</h3>
+        <p>When Reach cannot decide something, it says what the answer depends on instead of rounding it.</p>
+        <div class="verdicts">
+          <div class="verdict"><span class="t a">ALLOWED</span>with a witness request, replayed by a second evaluator</div>
+          <div class="verdict"><span class="t d">DENIED</span>a proof: no request satisfies the policies</div>
+          <div class="verdict"><span class="t u">UNKNOWN</span>names the condition it depends on</div>
+        </div>
+      </div>
+      <div class="cell w3 end">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></div>
+        <h3>The agents holding the credentials</h3>
+        <p>Claude Code, Cursor, VS Code, Windsurf and AI agents in GitHub Actions: their MCP servers, shell mode,
+          pre-approved commands and the credentials each can use. Agents that combine untrusted input, private data and a
+          way out get flagged, with the cheapest leg to break.</p>
+        <div class="verdicts">
+          <div class="verdict"><span class="t a">CRITICAL</span>Claude Code in triage.yml: issue comments, a deploy key, a write token</div>
+        </div>
+      </div>
+      <div class="cell w2">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg></div>
+        <h3>Tool poisoning</h3>
+        <p>Tool descriptions, skills and instruction files are checked for planted instructions, with
+          <a href="https://github.com/ctrl-adam/Husk" style="text-decoration:underline">Husk</a> for whole files.</p>
+      </div>
+      <div class="cell w2">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 7h18M3 12h18M3 17h18"/></svg></div>
+        <h3>Organizations</h3>
+        <p>SCPs from the root down to the account, RCPs with every documented exemption, and the org context keys.</p>
+      </div>
+      <div class="cell w2 end">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M13 2 3 14h9l-1 8 10-12h-9z"/></svg></div>
+        <h3>Whole accounts</h3>
+        <p>Every user and role against the high-impact questions, in parallel: 45,000 decisions in 40.5 s.</p>
+      </div>
+      <div class="cell w4 last">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 17l6-6-6-6M12 19h8"/></svg></div>
+        <h3>Exact where AWS is known</h3>
+        <p>ARNs segment by segment, 128-bit IP addresses, exact decimals, Unicode case folding, bounded sets for multi-valued
+          keys, and policy variables substituted symbolically. 22,080 actions are grouped into the few classes the policies
+          actually distinguish, so <code>*</code> queries take milliseconds.</p>
+      </div>
+      <div class="cell w2 end last">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg></div>
+        <h3>CI native</h3>
+        <p>A GitHub Action that uploads SARIF to code scanning, pointing at the line behind each finding.</p>
+      </div>
     </div>
-    <div class="term" style="margin-top:22px">
-      <div class="bar"><i></i><i></i><i></i></div>
-<pre><span class="p">$</span> reach can --authz authz.json --principal agent-dev s3:PutObject arn:aws:s3:::goat-uploads/report.csv
-<span class="r">ALLOWED</span>  s3:PutObject on arn:aws:s3:::goat-uploads/report.csv
+  </div>
+</section>
+
+<section id="usage">
+  <div class="container">
+    <div class="kicker">Usage</div>
+    <h2>One question, one account, or every pull request.</h2>
+    <p class="sub">Point Reach at a policy file or at an account snapshot from
+      <code>aws iam get-account-authorization-details</code>. It never calls anything that changes your account.</p>
+    <div class="code">
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" aria-selected="true" data-tab="can">reach can</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="agents">reach agents</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="audit">reach audit</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="ci">GitHub Action</button>
+      </div>
+<pre data-panel="can"><span class="c-p">$</span> reach can --authz authz.json --principal agent-dev s3:PutObject arn:aws:s3:::goat-uploads/report.csv
+<span class="c-a">ALLOWED</span>  s3:PutObject on arn:aws:s3:::goat-uploads/report.csv
   principal  arn:aws:iam::123456789012:user/agent-dev
   witness    s3:PutObject on arn:aws:s3:::goat-uploads/report.csv
              aws:SourceIp = "203.0.113.0"
 
-<span class="p">$</span> reach can --authz authz.json --principal agent-dev iam:CreateAccessKey '*'
-<span class="g">DENIED</span>  iam:CreateAccessKey on *
+<span class="c-p">$</span> reach can --authz authz.json --principal agent-dev iam:CreateAccessKey '*'
+<span class="c-d">DENIED</span>  iam:CreateAccessKey on *
   principal  arn:aws:iam::123456789012:user/agent-dev
   proof      no request context satisfies the policies (UNSAT)
   why        No identity-based or resource policy grants any action matching iam:CreateAccessKey.</pre>
-    </div>
-  </div>
-</section>
-
-<section id="how">
-  <div class="wrap">
-    <h2>How it works</h2>
-    <p class="sub">The encoding is exact where AWS's behaviour is known, and every unknown is explicit, so a proof never
-      rests on a guess.</p>
-    <div class="pipeline">
-      <div class="step"><h4>Load</h4><p>An account snapshot, an Organizations export (SCP and RCP tree), resource
-        policies, and agent configs on the machine or in CI.</p></div>
-      <div class="step"><h4>Group</h4><p>22,080 real actions from AWS's Service Authorization Reference, split into
-        classes every policy treats alike, one solver problem per class and resource type.</p></div>
-      <div class="step"><h4>Encode</h4><p>ARNs segment by segment, typed condition keys (strings, 128-bit IPs, exact
-        decimals, times, bounded sets), policy variables substituted symbolically.</p></div>
-      <div class="step"><h4>Solve</h4><p>Z3 checks the optimistic and the worst case, so unmodelled conditions can
-        block a proof but never fake one.</p></div>
-      <div class="step"><h4>Check</h4><p>Every witness is replayed by a second evaluator, and the two are fuzzed against
-        each other and against AWS.</p></div>
-    </div>
-  </div>
-</section>
-
-<section id="agents">
-  <div class="wrap grid2">
-    <div>
-      <h2>The agents holding the credentials</h2>
-      <p class="sub" style="margin-bottom:18px">An agent that reads text an attacker wrote, can reach private data, and
-        can send data out can be instructed to leak it. Simon Willison calls this the lethal trifecta. Reach finds it,
-        leg by leg, from evidence.</p>
-      <ul class="points">
-        <li><b>Agents and tools:</b> Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, and AI agents in GitHub
-          Actions, with their MCP servers, shell mode and pre-approved commands.</li>
-        <li><b>Credentials:</b> what each tool is handed and what any shell can read, never printing a secret. AWS
-          profiles are resolved and run through the engine.</li>
-        <li><b>Planted instructions:</b> instruction files, skills, subagents and local MCP servers' tool descriptions
-          are checked for tool poisoning, with <a href="https://github.com/ctrl-adam/Husk">Husk</a> for whole files.</li>
-        <li><b>In CI:</b> SARIF for GitHub code scanning, pointing at the line that causes each finding.</li>
-      </ul>
-    </div>
-    <div class="term">
-      <div class="bar"><i></i><i></i><i></i></div>
-<pre><span class="p">$</span> reach agents --project examples/reach-goat
-<span class="d">Lethal trifecta (untrusted input + private data + exfiltration)</span>
-  <span class="r">CRITICAL</span>  Claude Code in triage.yml:triage
+<pre data-panel="agents" hidden><span class="c-p">$</span> reach agents --project examples/reach-goat
+<span class="c-m">Lethal trifecta (untrusted input + private data + exfiltration in one agent)</span>
+  <span class="c-a">CRITICAL</span>  Claude Code in triage.yml:triage
     untrusted input triggered by issue_comment, issues
-    private data    secrets in the job: ANTHROPIC_API_KEY,
-                    DEPLOY_KEY
-    private data    id-token: write: can request cloud
-                    credentials via OIDC
-    exfiltration    GITHUB_TOKEN can write (contents, issues,
-                    pull-requests): comments, issues or pushes
+    private data    secrets in the job: ANTHROPIC_API_KEY, DEPLOY_KEY
+    private data    id-token: write: can request cloud credentials via OIDC
+    exfiltration    GITHUB_TOKEN can write (contents, issues, pull-requests)
     exfiltration    shell on the runner with network access
-    <span class="d">cheapest fix, break the untrusted input leg:</span>
-    add an `if:` gate so only trusted authors
-    (author_association OWNER/MEMBER) can trigger the agent</pre>
+    <span class="c-m">cheapest fix, break the untrusted input leg:</span> add an `if:` gate so only
+    trusted authors (author_association OWNER/MEMBER) can trigger the agent</pre>
+<pre data-panel="audit" hidden><span class="c-p">$</span> reach audit --authz synthetic-account.json --html report.html
+<span class="c-m">principal          read secrets  decrypt with KMS  modify IAM  assume roles  ...</span>
+role/ci-data-0118  <span class="c-a">ALLOW</span>         <span class="c-a">ALLOW</span>             <span class="c-a">ALLOW</span>       -
+role/ci-data-0221  -             -                 -           -
+user/user-0010     <span class="c-a">ALLOW</span>         -                 <span class="c-a">ALLOW</span>       <span class="c-a">ALLOW</span>
+user/user-0011     <span class="c-a">ALLOW</span>         -                 -           -
+
+<span class="c-m">Who can</span>
+  read secrets: 559 proven (role/ci-data-0118, role/ci-data-0233, ...)
+  decrypt with KMS: 436 proven (role/ci-data-0118, role/ci-data-0233, ...)
+
+<span class="c-m">1000 principals x 9 questions = 9000 decisions in 12.7 s on 32 worker(s)</span></pre>
+<pre data-panel="ci" hidden><span class="c-m"># .github/workflows/reach.yml</span>
+<span class="c-k">permissions</span>:
+  <span class="c-k">contents</span>: read
+  <span class="c-k">security-events</span>: write
+<span class="c-k">steps</span>:
+  - <span class="c-k">uses</span>: actions/checkout@v7
+  - <span class="c-k">uses</span>: ctrl-adam/Reach@v0.2.1
+    <span class="c-k">with</span>:
+      <span class="c-k">fail-on</span>: critical</pre>
     </div>
   </div>
 </section>
 
 <section id="validation">
-  <div class="wrap">
-    <h2>Checked against AWS, not against the docs</h2>
+  <div class="container">
+    <div class="kicker">Validation</div>
+    <h2>Checked against AWS, not against the docs.</h2>
     <p class="sub">Documentation leaves edge cases open. Reach measures them on AWS's policy simulator, models what it
-      sees, and records each result with the probe that found it. Some of these were Reach bugs; some are AWS
-      behaviour nobody had written down.</p>
-    <div class="stats">
-      <div class="stat"><b>9,581</b><span>comparisons with AWS's policy simulator</span></div>
-      <div class="stat"><b>0</b><span>open disagreements</span></div>
-      <div class="stat"><b>45,000</b><span>decisions for 5,000 principals in 40.5 s</span></div>
-      <div class="stat"><b>242</b><span>tests, plus a differential fuzzer in CI</span></div>
+      sees, and keeps the probe that found it.</p>
+    <div class="table">
+      <div class="row"><div class="k">RCP action classes</div><div class="v">A Deny on <code>s3:GetObject</code> says nothing about <code>s3:PutObject</code>. Found by the fuzzer in CI and fixed in 0.2.1.</div></div>
+      <div class="row"><div class="k">Numbers</div><div class="v">Compared exactly: <code>9007199254740993</code> is not <code>9007199254740992</code>. An invalid value fails every operator, <code>NumericNotEquals</code> included.</div></div>
+      <div class="row"><div class="k">Ignore case</div><div class="v">Full Unicode lowercase: the Kelvin sign matches <code>k</code>, but long s does not match <code>s</code>, although Java's rule says it does.</div></div>
+      <div class="row"><div class="k">IPv6</div><div class="v">Families never mix: <code>0.0.0.0/0</code> matches no IPv6 source, and <code>::ffff:10.1.2.3</code> counts as IPv4.</div></div>
+      <div class="row"><div class="k">Binary</div><div class="v">Base64 is compared as text: <code>YWI=</code> and <code>YWJ=</code> differ, though both decode to <code>ab</code>.</div></div>
+      <div class="row"><div class="k">Simulator</div><div class="v">For same-account grants to the account principal, AWS's own simulator is wrong. A live S3 test settled it.</div></div>
     </div>
-    <div class="tablewrap">
-      <table class="findings">
-        <thead><tr><th>Finding</th><th>What AWS does</th></tr></thead>
-        <tbody>
-          <tr><td>RCPs</td><td>A Deny on <code>s3:GetObject</code> says nothing about <code>s3:PutObject</code>; actions an RCP treats differently are now never grouped. Found by the fuzzer in CI.</td></tr>
-          <tr><td>Numbers</td><td>BigDecimal syntax, compared exactly: <code>9007199254740993</code> is not <code>9007199254740992</code>, and an invalid value fails every operator, <code>NumericNotEquals</code> included.</td></tr>
-          <tr><td>Ignore case</td><td>Full Unicode lowercase: the Kelvin sign matches <code>k</code>, but long s does not match <code>s</code>, although Java's rule says it does.</td></tr>
-          <tr><td>IPv6</td><td>Families never mix: <code>0.0.0.0/0</code> matches no IPv6 source, and <code>::ffff:10.1.2.3</code> counts as IPv4.</td></tr>
-          <tr><td>Bool</td><td>Any letter case of <code>true</code> is true and everything else is false, for every key.</td></tr>
-          <tr><td>Binary</td><td>Base64 is compared as text: <code>YWI=</code> and <code>YWJ=</code> differ, though both decode to <code>ab</code>.</td></tr>
-          <tr><td>Simulator</td><td>For same-account grants to the account principal, AWS's simulator is wrong; a live S3 test settled it.</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p class="sub" style="margin:16px 0 0">Every finding, with its probe and its numbers:
-      <a href="https://github.com/ctrl-adam/Reach/blob/main/validation/FINDINGS.md">validation/FINDINGS.md</a>.</p>
+    <a class="more" href="https://github.com/ctrl-adam/Reach/blob/main/validation/FINDINGS.md">All ten findings, with probes and numbers &rarr;</a>
   </div>
 </section>
 
-<section id="demo">
-  <div class="wrap">
-    <h2>Live demo: a whole account, audited</h2>
-    <p class="sub">This is <code>reach audit --html</code>, run when this site was built, on a synthetic account of 500
-      users and roles with team groups, boundaries, tag-based access, NotAction policies and OIDC roles. Click any cell
-      to see the witness request, the statements that allow it, and the command that reproduces it.</p>
-    <div class="demo">
-      <div class="bar"><span>demo/report.html</span><a href="demo/report.html" target="_blank" rel="noopener">Open full screen</a></div>
-      <iframe src="demo/report.html" title="Reach audit report of a synthetic account" loading="lazy"></iframe>
-    </div>
+<div class="cta">
+  <h2>Start proving.</h2>
+  <p class="sub">Open source under AGPL-3.0. Runs locally, reads your policies, sends nothing anywhere.</p>
+  <div class="actions">
+    <a class="btn solid" href="https://pypi.org/project/reach-security/">pip install reach-security</a>
+    <a class="btn" href="https://github.com/ctrl-adam/Reach">Read the docs</a>
   </div>
-</section>
-
-<section id="ci">
-  <div class="wrap grid2">
-    <div>
-      <h2>Run it everywhere</h2>
-      <ul class="points">
-        <li><b>One question:</b> <code>reach can</code> with a policy file or an account snapshot.</li>
-        <li><b>A whole account:</b> <code>reach audit</code>, in parallel, with a matrix, JSON or HTML.</li>
-        <li><b>An organization:</b> <code>--org</code> applies the SCP and RCP tree from a read-only export.</li>
-        <li><b>Every pull request:</b> the GitHub Action uploads findings to code scanning.</li>
-      </ul>
-    </div>
-    <div class="term">
-      <div class="bar"><i></i><i></i><i></i></div>
-<pre><span class="d"># .github/workflows/reach.yml</span>
-permissions:
-  contents: read
-  security-events: write
-steps:
-  - uses: actions/checkout@v7
-  - uses: ctrl-adam/Reach@v0.2.1
-    with:
-      fail-on: critical</pre>
-    </div>
-  </div>
-</section>
+</div>
 
 <footer>
-  <div class="wrap">
-    <span>Reach &middot; AGPL-3.0 &middot; <a href="https://pypi.org/project/reach-security/">reach-security on PyPI</a></span>
-    <span><a href="https://github.com/ctrl-adam/Reach">github.com/ctrl-adam/Reach</a></span>
+  <div class="container">
+    <span>Reach &middot; AGPL-3.0</span>
+    <div class="links">
+      <a href="https://github.com/ctrl-adam/Reach">GitHub</a>
+      <a href="https://pypi.org/project/reach-security/">PyPI</a>
+      <a href="https://github.com/ctrl-adam/Reach/blob/main/CHANGELOG.md">Changelog</a>
+    </div>
   </div>
 </footer>
 
 <script>
 document.getElementById("copy").addEventListener("click", async (e) => {
+  const button = e.currentTarget;
   try {
     await navigator.clipboard.writeText(document.getElementById("cmd").textContent);
-    e.target.textContent = "Copied";
-  } catch (_) {
-    e.target.textContent = "Select and copy";
-  }
-  setTimeout(() => { e.target.textContent = "Copy"; }, 1600);
+    button.style.color = "var(--deny)";
+  } catch (_) { /* clipboard blocked: the command is selectable */ }
+  setTimeout(() => { button.style.color = ""; }, 1200);
 });
+for (const tab of document.querySelectorAll(".tab")) {
+  tab.addEventListener("click", () => {
+    for (const t of document.querySelectorAll(".tab")) t.setAttribute("aria-selected", String(t === tab));
+    for (const p of document.querySelectorAll("[data-panel]")) p.hidden = p.dataset.panel !== tab.dataset.tab;
+  });
+}
 </script>
 </body>
 </html>
