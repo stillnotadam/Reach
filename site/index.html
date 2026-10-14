@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reach: prove what credentials can reach</title>
+<meta name="description" content="Open-source tool that proves what cloud credentials, and the AI agents holding them, can actually reach in AWS. Z3-backed IAM reasoning, validated against AWS's own policy simulator.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231c1d1f'/%3E%3Cpath d='M9 23V9h7.5a4.5 4.5 0 0 1 0 9H9m7-0 6 5' stroke='%2363d6a0' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #f6f6f3; --panel: #ffffff; --ink: #18191b; --muted: #61646b; --line: #e3e3de; --soft: #efefea;
+  --accent: #127a52; --accent-ink: #ffffff; --allow: #c2362f; --deny: #1f7a4a; --unknown: #946200;
+  --term-bg: #15171a; --term-ink: #d8dbe0; --term-dim: #7d838c;
+  --mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1012; --panel: #17181b; --ink: #e9e9e6; --muted: #9a9da4; --line: #2a2c30; --soft: #1d1f22;
+    --accent: #63d6a0; --accent-ink: #0c2a1d; --allow: #ff7d72; --deny: #6fcf98; --unknown: #f2c35b;
+    --term-bg: #0b0c0e; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1012; --panel: #17181b; --ink: #e9e9e6; --muted: #9a9da4; --line: #2a2c30; --soft: #1d1f22;
+  --accent: #63d6a0; --accent-ink: #0c2a1d; --allow: #ff7d72; --deny: #6fcf98; --unknown: #f2c35b;
+  --term-bg: #0b0c0e; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.6 var(--sans); }
+a { color: inherit; }
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+code { font: 0.92em var(--mono); background: var(--soft); border: 1px solid var(--line); border-radius: 5px; padding: 0 5px; }
+
+nav { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+nav .wrap { display: flex; align-items: center; gap: 22px; height: 56px; }
+.brand { display: flex; align-items: center; gap: 9px; font-weight: 700; text-decoration: none; letter-spacing: -0.01em; }
+.brand svg { width: 24px; height: 24px; }
+nav .links { margin-left: auto; display: flex; gap: 18px; font-size: 14.5px; }
+nav .links a { text-decoration: none; color: var(--muted); }
+nav .links a:hover { color: var(--ink); }
+@media (max-width: 640px) { nav .links .opt { display: none; } }
+
+header.hero { padding: 72px 0 40px; }
+.eyebrow { font: 600 12.5px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+h1 { font-size: clamp(34px, 6vw, 58px); line-height: 1.05; letter-spacing: -0.03em; margin: 14px 0 20px; max-width: 880px; }
+.lede { font-size: clamp(17px, 2.2vw, 19.5px); color: var(--muted); max-width: 780px; margin: 0 0 30px; }
+.cta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.btn { display: inline-flex; align-items: center; gap: 8px; padding: 11px 18px; border-radius: 9px; font-weight: 600;
+  font-size: 15px; text-decoration: none; border: 1px solid var(--line); background: var(--panel); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+.btn:hover { filter: brightness(1.05); }
+.install { display: inline-flex; align-items: center; gap: 10px; font: 14.5px var(--mono); background: var(--term-bg);
+  color: var(--term-ink); padding: 10px 10px 10px 16px; border-radius: 9px; max-width: 100%; }
+.install span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.install button { font: 600 12px var(--sans); color: var(--term-ink); background: #2a2d33; border: 0; border-radius: 6px;
+  padding: 5px 10px; cursor: pointer; }
+.badges { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 26px; color: var(--muted); font-size: 14px; }
+.badges b { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+section { padding: 56px 0; border-top: 1px solid var(--line); }
+h2 { font-size: clamp(25px, 3.4vw, 34px); letter-spacing: -0.02em; line-height: 1.15; margin: 0 0 12px; }
+.sub { color: var(--muted); max-width: 760px; margin: 0 0 30px; }
+.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; align-items: start; }
+@media (max-width: 860px) { .grid3, .grid2 { grid-template-columns: 1fr; } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
+.card h3 { margin: 0 0 6px; font-size: 17px; display: flex; align-items: center; gap: 10px; }
+.card p { margin: 0; color: var(--muted); font-size: 15px; }
+.tag { font: 700 12px var(--mono); padding: 3px 8px; border-radius: 6px; letter-spacing: 0.02em; }
+.tag.allow { color: var(--allow); background: color-mix(in srgb, var(--allow) 13%, transparent); }
+.tag.deny { color: var(--deny); background: color-mix(in srgb, var(--deny) 13%, transparent); }
+.tag.unknown { color: var(--unknown); background: color-mix(in srgb, var(--unknown) 15%, transparent); }
+
+.term { background: var(--term-bg); color: var(--term-ink); border-radius: 12px; overflow: hidden; border: 1px solid #23262b; }
+.term .bar { display: flex; gap: 6px; padding: 10px 14px; background: #1b1d21; }
+.term .bar i { width: 10px; height: 10px; border-radius: 50%; background: #3a3d44; }
+.term pre { margin: 0; padding: 16px 18px; font: 13px/1.6 var(--mono); overflow-x: auto; white-space: pre; }
+.term .p { color: var(--term-dim); } .term .r { color: #ff7d72; font-weight: 700; } .term .g { color: #6fcf98; font-weight: 700; }
+.term .y { color: #f2c35b; font-weight: 700; } .term .d { color: var(--term-dim); }
+
+.pipeline { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; counter-reset: step; }
+@media (max-width: 960px) { .pipeline { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 560px) { .pipeline { grid-template-columns: 1fr; } }
+.step { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; position: relative; }
+.step::before { counter-increment: step; content: counter(step); font: 700 12px var(--mono); color: var(--accent);
+  border: 1px solid var(--line); border-radius: 6px; padding: 1px 7px; }
+.step h4 { margin: 10px 0 6px; font-size: 15.5px; }
+.step p { margin: 0; font-size: 14px; color: var(--muted); }
+
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 26px; }
+@media (max-width: 860px) { .stats { grid-template-columns: 1fr 1fr; } }
+.stat { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+.stat b { display: block; font-size: 28px; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.stat span { color: var(--muted); font-size: 14px; }
+.findings { width: 100%; border-collapse: collapse; font-size: 14.5px; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 12px; overflow: hidden; }
+.findings th, .findings td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.findings th { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); background: var(--soft); }
+.findings tr:last-child td { border-bottom: 0; }
+.findings td:first-child { font: 600 13px var(--mono); color: var(--accent); white-space: nowrap; }
+.tablewrap { overflow-x: auto; border-radius: 12px; }
+
+.demo { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--panel); }
+.demo .bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px;
+  border-bottom: 1px solid var(--line); font-size: 14px; color: var(--muted); flex-wrap: wrap; }
+.demo iframe { display: block; width: 100%; height: 780px; border: 0; background: var(--bg); }
+@media (max-width: 640px) { .demo iframe { height: 620px; } }
+
+ul.points { margin: 0; padding-left: 20px; color: var(--muted); }
+ul.points li { margin: 6px 0; }
+ul.points b { color: var(--ink); }
+footer { border-top: 1px solid var(--line); padding: 30px 0 48px; color: var(--muted); font-size: 14px; }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 24px; justify-content: space-between; }
+</style>
+</head>
+<body>
+<nav>
+  <div class="wrap">
+    <a class="brand" href="#">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="currentColor" opacity=".9"/><path d="M9 23V9h7.5a4.5 4.5 0 0 1 0 9H9m7 0 6 5" stroke="var(--bg)" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Reach
+    </a>
+    <div class="links">
+      <a class="opt" href="#proofs">Proofs</a>
+      <a class="opt" href="#agents">Agents</a>
+      <a class="opt" href="#validation">Validation</a>
+      <a href="#demo">Demo</a>
+      <a href="https://github.com/ctrl-adam/Reach">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="eyebrow">Open source &middot; AWS IAM &middot; AI agents</div>
+    <h1>Prove what cloud credentials, and the AI agents holding them, can actually reach.</h1>
+    <p class="lede">Reach turns AWS IAM policies into constraints for the Z3 solver. Every DENIED is a proof, and every
+      ALLOWED comes with a concrete request, re-checked by an independent evaluator and validated against AWS's own policy
+      simulator. Then it maps each AI agent to the credentials, tools and text it can reach, and flags the ones that can be
+      talked into sending your data out.</p>
+    <div class="cta">
+      <div class="install"><span id="cmd">pip install reach-security</span><button type="button" id="copy">Copy</button></div>
+      <a class="btn primary" href="#demo">Open the live demo</a>
+      <a class="btn" href="https://github.com/ctrl-adam/Reach">View on GitHub</a>
+    </div>
+    <div class="badges">
+      <span><b>9,581</b> comparisons with AWS's simulator</span>
+      <span><b>10</b> AWS behaviours measured and documented</span>
+      <span><b>5,000</b> principals audited in <b>40.5 s</b></span>
+      <span>AGPL-3.0</span>
+    </div>
+  </div>
+</header>
+
+<section id="proofs">
+  <div class="wrap">
+    <h2>Three verdicts, and none of them is a guess</h2>
+    <p class="sub">Policy linters match patterns. Reach asks the solver whether <em>any</em> request in the whole space
+      of actions, resources and request contexts gets through identity policies, permissions boundaries, SCPs, RCPs,
+      session policies and resource policies together.</p>
+    <div class="grid3">
+      <div class="card"><h3><span class="tag allow">ALLOWED</span></h3>
+        <p>Comes with a witness: the exact action, resource and context keys of a request that gets through. Before it is
+          shown, a second, solver-free evaluator replays it.</p></div>
+      <div class="card"><h3><span class="tag deny">DENIED</span></h3>
+        <p>A proof: no request satisfies the policies (UNSAT). Reach also says why: an explicit Deny, a boundary, an SCP
+          layer, or no grant at all.</p></div>
+      <div class="card"><h3><span class="tag unknown">UNKNOWN</span></h3>
+        <p>When an answer depends on something Reach does not model, it says so and names the assumption, instead of
+          rounding it to a yes or a no.</p></div>
+    </div>
+    <div class="term" style="margin-top:22px">
+      <div class="bar"><i></i><i></i><i></i></div>
+<pre><span class="p">$</span> reach can --authz authz.json --principal agent-dev s3:PutObject arn:aws:s3:::goat-uploads/report.csv
+<span class="r">ALLOWED</span>  s3:PutObject on arn:aws:s3:::goat-uploads/report.csv
+  principal  arn:aws:iam::123456789012:user/agent-dev
+  witness    s3:PutObject on arn:aws:s3:::goat-uploads/report.csv
+             aws:SourceIp = "203.0.113.0"
+
+<span class="p">$</span> reach can --authz authz.json --principal agent-dev iam:CreateAccessKey '*'
+<span class="g">DENIED</span>  iam:CreateAccessKey on *
+  principal  arn:aws:iam::123456789012:user/agent-dev
+  proof      no request context satisfies the policies (UNSAT)
+  why        No identity-based or resource policy grants any action matching iam:CreateAccessKey.</pre>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <h2>How it works</h2>
+    <p class="sub">The encoding is exact where AWS's behaviour is known, and every unknown is explicit, so a proof never
+      rests on a guess.</p>
+    <div class="pipeline">
+      <div class="step"><h4>Load</h4><p>An account snapshot, an Organizations export (SCP and RCP tree), resource
+        policies, and agent configs on the machine or in CI.</p></div>
+      <div class="step"><h4>Group</h4><p>22,080 real actions from AWS's Service Authorization Reference, split into
+        classes every policy treats alike, one solver problem per class and resource type.</p></div>
+      <div class="step"><h4>Encode</h4><p>ARNs segment by segment, typed condition keys (strings, 128-bit IPs, exact
+        decimals, times, bounded sets), policy variables substituted symbolically.</p></div>
+      <div class="step"><h4>Solve</h4><p>Z3 checks the optimistic and the worst case, so unmodelled conditions can
+        block a proof but never fake one.</p></div>
+      <div class="step"><h4>Check</h4><p>Every witness is replayed by a second evaluator, and the two are fuzzed against
+        each other and against AWS.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="agents">
+  <div class="wrap grid2">
+    <div>
+      <h2>The agents holding the credentials</h2>
+      <p class="sub" style="margin-bottom:18px">An agent that reads text an attacker wrote, can reach private data, and
+        can send data out can be instructed to leak it. Simon Willison calls this the lethal trifecta. Reach finds it,
+        leg by leg, from evidence.</p>
+      <ul class="points">
+        <li><b>Agents and tools:</b> Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, and AI agents in GitHub
+          Actions, with their MCP servers, shell mode and pre-approved commands.</li>
+        <li><b>Credentials:</b> what each tool is handed and what any shell can read, never printing a secret. AWS
+          profiles are resolved and run through the engine.</li>
+        <li><b>Planted instructions:</b> instruction files, skills, subagents and local MCP servers' tool descriptions
+          are checked for tool poisoning, with <a href="https://github.com/ctrl-adam/Husk">Husk</a> for whole files.</li>
+        <li><b>In CI:</b> SARIF for GitHub code scanning, pointing at the line that causes each finding.</li>
+      </ul>
+    </div>
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i></div>
+<pre><span class="p">$</span> reach agents --project examples/reach-goat
+<span class="d">Lethal trifecta (untrusted input + private data + exfiltration)</span>
+  <span class="r">CRITICAL</span>  Claude Code in triage.yml:triage
+    untrusted input triggered by issue_comment, issues
+    private data    secrets in the job: ANTHROPIC_API_KEY,
+                    DEPLOY_KEY
+    private data    id-token: write: can request cloud
+                    credentials via OIDC
+    exfiltration    GITHUB_TOKEN can write (contents, issues,
+                    pull-requests): comments, issues or pushes
+    exfiltration    shell on the runner with network access
+    <span class="d">cheapest fix, break the untrusted input leg:</span>
+    add an `if:` gate so only trusted authors
+    (author_association OWNER/MEMBER) can trigger the agent</pre>
+    </div>
+  </div>
+</section>
+
+<section id="validation">
+  <div class="wrap">
+    <h2>Checked against AWS, not against the docs</h2>
+    <p class="sub">Documentation leaves edge cases open. Reach measures them on AWS's policy simulator, models what it
+      sees, and records each result with the probe that found it. Some of these were Reach bugs; some are AWS
+      behaviour nobody had written down.</p>
+    <div class="stats">
+      <div class="stat"><b>9,581</b><span>comparisons with AWS's policy simulator</span></div>
+      <div class="stat"><b>0</b><span>open disagreements</span></div>
+      <div class="stat"><b>45,000</b><span>decisions for 5,000 principals in 40.5 s</span></div>
+      <div class="stat"><b>242</b><span>tests, plus a differential fuzzer in CI</span></div>
+    </div>
+    <div class="tablewrap">
+      <table class="findings">
+        <thead><tr><th>Finding</th><th>What AWS does</th></tr></thead>
+        <tbody>
+          <tr><td>RCPs</td><td>A Deny on <code>s3:GetObject</code> says nothing about <code>s3:PutObject</code>; actions an RCP treats differently are now never grouped. Found by the fuzzer in CI.</td></tr>
+          <tr><td>Numbers</td><td>BigDecimal syntax, compared exactly: <code>9007199254740993</code> is not <code>9007199254740992</code>, and an invalid value fails every operator, <code>NumericNotEquals</code> included.</td></tr>
+          <tr><td>Ignore case</td><td>Full Unicode lowercase: the Kelvin sign matches <code>k</code>, but long s does not match <code>s</code>, although Java's rule says it does.</td></tr>
+          <tr><td>IPv6</td><td>Families never mix: <code>0.0.0.0/0</code> matches no IPv6 source, and <code>::ffff:10.1.2.3</code> counts as IPv4.</td></tr>
+          <tr><td>Bool</td><td>Any letter case of <code>true</code> is true and everything else is false, for every key.</td></tr>
+          <tr><td>Binary</td><td>Base64 is compared as text: <code>YWI=</code> and <code>YWJ=</code> differ, though both decode to <code>ab</code>.</td></tr>
+          <tr><td>Simulator</td><td>For same-account grants to the account principal, AWS's simulator is wrong; a live S3 test settled it.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="sub" style="margin:16px 0 0">Every finding, with its probe and its numbers:
+      <a href="https://github.com/ctrl-adam/Reach/blob/main/validation/FINDINGS.md">validation/FINDINGS.md</a>.</p>
+  </div>
+</section>
+
+<section id="demo">
+  <div class="wrap">
+    <h2>Live demo: a whole account, audited</h2>
+    <p class="sub">This is <code>reach audit --html</code>, run when this site was built, on a synthetic account of 500
+      users and roles with team groups, boundaries, tag-based access, NotAction policies and OIDC roles. Click any cell
+      to see the witness request, the statements that allow it, and the command that reproduces it.</p>
+    <div class="demo">
+      <div class="bar"><span>demo/report.html</span><a href="demo/report.html" target="_blank" rel="noopener">Open full screen</a></div>
+      <iframe src="demo/report.html" title="Reach audit report of a synthetic account" loading="lazy"></iframe>
+    </div>
+  </div>
+</section>
+
+<section id="ci">
+  <div class="wrap grid2">
+    <div>
+      <h2>Run it everywhere</h2>
+      <ul class="points">
+        <li><b>One question:</b> <code>reach can</code> with a policy file or an account snapshot.</li>
+        <li><b>A whole account:</b> <code>reach audit</code>, in parallel, with a matrix, JSON or HTML.</li>
+        <li><b>An organization:</b> <code>--org</code> applies the SCP and RCP tree from a read-only export.</li>
+        <li><b>Every pull request:</b> the GitHub Action uploads findings to code scanning.</li>
+      </ul>
+    </div>
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i></div>
+<pre><span class="d"># .github/workflows/reach.yml</span>
+permissions:
+  contents: read
+  security-events: write
+steps:
+  - uses: actions/checkout@v7
+  - uses: ctrl-adam/Reach@v0.2.1
+    with:
+      fail-on: critical</pre>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>Reach &middot; AGPL-3.0 &middot; <a href="https://pypi.org/project/reach-security/">reach-security on PyPI</a></span>
+    <span><a href="https://github.com/ctrl-adam/Reach">github.com/ctrl-adam/Reach</a></span>
+  </div>
+</footer>
+
+<script>
+document.getElementById("copy").addEventListener("click", async (e) => {
+  try {
+    await navigator.clipboard.writeText(document.getElementById("cmd").textContent);
+    e.target.textContent = "Copied";
+  } catch (_) {
+    e.target.textContent = "Select and copy";
+  }
+  setTimeout(() => { e.target.textContent = "Copy"; }, 1600);
+});
+</script>
+</body>
+</html>

@@ -14,3 +14,4 @@ venv/
 # AWS simulator harness output
 sim-report*.jsonl
 sim-smoke.jsonl
+_site/

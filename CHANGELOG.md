@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Project website (`site/`, built by `scripts/build_site.py` and deployed to GitHub Pages) with a live
+  `reach audit --html` report generated from a synthetic account at build time.
+
 ## 0.2.1 (2026-10-14)
 
 ### Added

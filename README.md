@@ -20,7 +20,8 @@ reach agents --project .                      # agents, tools, credentials, trif
 reach can --authz authz.json --principal dev secretsmanager:GetSecretValue '*'
 ```
 
-Try it on the deliberately vulnerable [`examples/reach-goat`](examples/reach-goat).
+Try it on the deliberately vulnerable [`examples/reach-goat`](examples/reach-goat), or click through a
+[live audit report](https://ctrl-adam.github.io/Reach/#demo) of a synthetic account on the [project site](https://ctrl-adam.github.io/Reach/).
 
 ## How the reasoning works
 
@@ -133,7 +134,7 @@ permissions:
   contents: read
   security-events: write  # to upload the report
 steps:
-  - uses: actions/checkout@v5
+  - uses: actions/checkout@v7
   - uses: ctrl-adam/Reach@v0.2.1
     with:
       fail-on: critical  # optional: fail the job on a critical trifecta
