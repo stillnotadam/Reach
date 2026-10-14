@@ -21,6 +21,8 @@ operator on an IP or time key is treated as unmodelled.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import datetime as dt
 import ipaddress
 import re
@@ -236,3 +238,18 @@ def ignore_case_classes(text: str) -> list[tuple[str, ...]] | None:
         members += [k for k, v in _LOWERS_INTO_LATIN_1.items() if v == c]
         classes.append(tuple(members))
     return classes
+
+
+# --- binary values (BinaryEquals) -------------------------------------------------------------------------------
+#
+# Measured on AWS (validation/FINDINGS.md, finding 10): the policy value must be base64 (IAM rejects anything else),
+# and it is compared with the request value as text, without decoding: "YWI=" does not match "YWJ=", though both
+# decode to "ab", and "YWI" does not match "YWI=". BinaryEquals is StringEquals over base64 text.
+
+
+def is_base64(text: str) -> bool:
+    try:
+        base64.b64decode(text, validate=True)
+    except (binascii.Error, ValueError):
+        return False
+    return True

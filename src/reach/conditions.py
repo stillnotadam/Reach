@@ -37,6 +37,7 @@ from .values import (
     UNMODELLED,
     decimal_places,
     ignore_case_classes,
+    is_base64,
     parse_bool,
     parse_ip,
     parse_ip_network,
@@ -67,6 +68,8 @@ STRING_OPS = {
     "StringEqualsIgnoreCase": "ieq",
     "StringNotEquals": "eq",
     "StringNotEqualsIgnoreCase": "ieq",
+    "BinaryEquals": "eq",  # base64 text, compared as text (finding 10)
+    "BinaryNotEquals": "eq",
     "StringNotLike": "like",
     "ArnNotEquals": "arn",
     "ArnNotLike": "arn",
@@ -467,6 +470,8 @@ def encode_condition(cond: Condition, ctx: Context, stmt: Statement) -> z3.BoolR
 
     if STRING_OPS.get(base) == "ieq" and not _latin_1(cond.values):
         return ctx.opaque(stmt, f"{op} {cond.key} with text outside Latin-1, which IAM does not accept")
+    if base.startswith("Binary") and not all(is_base64(v) for v in cond.values):
+        return ctx.opaque(stmt, f"{op} {cond.key} with a value that is not base64, which IAM does not accept")
 
     if base in STRING_OPS and kind == "string":
         present, value = ctx.present(cond.key), ctx.string(cond.key)
@@ -515,7 +520,8 @@ def _encode_set(cond: Condition, ctx: Context, stmt: Statement, base: str, if_ex
     family = STRING_OPS.get(inner)
     if qualifier not in ("ForAnyValue", "ForAllValues") or if_exists or family in (None, "bool"):
         return ctx.opaque(stmt, f"set operator {cond.operator} on {cond.key}")
-    if kind not in ("string", "set") or (family == "ieq" and not _latin_1(cond.values)):
+    unaccepted = inner.startswith("Binary") and not all(is_base64(v) for v in cond.values)
+    if kind not in ("string", "set") or (family == "ieq" and not _latin_1(cond.values)) or unaccepted:
         return ctx.opaque(stmt, f"set operator {cond.operator} on {cond.key}")
     hits = []
     for member, value in ctx.elements(cond.key):

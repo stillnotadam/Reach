@@ -39,6 +39,7 @@ from .values import (
     TIME_KEYS,
     UNMODELLED,
     ignore_case_equal,
+    is_base64,
     parse_bool,
     parse_ip,
     parse_ip_network,
@@ -115,7 +116,7 @@ _COMPARE = {
 }
 _STRINGISH = frozenset(
     {"StringEquals", "StringNotEquals", "StringLike", "StringNotLike", "ArnEquals", "ArnLike", "ArnNotEquals",
-     "ArnNotLike", "Bool", "StringEqualsIgnoreCase", "StringNotEqualsIgnoreCase"}
+     "ArnNotLike", "Bool", "StringEqualsIgnoreCase", "StringNotEqualsIgnoreCase", "BinaryEquals", "BinaryNotEquals"}
 )  # fmt: skip
 
 
@@ -129,6 +130,8 @@ def _family(base: str) -> tuple[str, str] | None:
 
 def _modelled(base: str, kind: str, values: tuple[str, ...]) -> bool:
     """Whether an operator is modelled at all, independent of the request's value."""
+    if base in ("BinaryEquals", "BinaryNotEquals"):
+        return kind == "string" and all(is_base64(v) for v in values)  # IAM rejects anything else, like the engine
     if base in ("StringEqualsIgnoreCase", "StringNotEqualsIgnoreCase"):
         # IAM accepts only Latin-1 text in a policy; other text is not modelled (like the engine).
         return kind == "string" and all(ord(c) <= 0xFF for v in values for c in literal(v))
@@ -149,6 +152,8 @@ def _hit(base: str, value: str, values: tuple[str, ...]) -> Tri:
     """Does a present value match a modelled operator's value list (before negation)?"""
     if base in ("StringEquals", "StringNotEquals"):
         return value in {literal(v) for v in values}
+    if base in ("BinaryEquals", "BinaryNotEquals"):
+        return value in values  # base64 text, not decoded
     if base in ("StringEqualsIgnoreCase", "StringNotEqualsIgnoreCase"):
         return any(ignore_case_equal(value, literal(v)) for v in values)
     if base in ("StringLike", "StringNotLike"):

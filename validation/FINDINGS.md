@@ -116,6 +116,18 @@ hand and then checked against AWS. Each one is either a Reach bug that is now fi
 - **Result:** 1,615 cases decided by Reach and compared, 0 disagreements. Tests: `test_numbers_are_exact_decimals`,
   `test_free_decimal_and_negative_witnesses`, `test_invalid_numbers_make_every_numeric_operator_false`.
 
+### 10. `BinaryEquals` compares base64 text, without decoding
+
+- **Before:** `BinaryEquals` was not modelled; every condition using it was UNKNOWN.
+- **Probe:** `validation/binary_probe.py`, 180 simulator calls, plus 30 exploratory ones. IAM rejects a policy whose
+  value is not valid base64 (`InvalidInput`), so policy values are always base64. The request value is compared with
+  them as text: `YWI=` does not match `YWJ=`, though both decode to `ab` (the second has non-canonical padding bits),
+  `YWI` does not match `YWI=`, and `ywjj` does not match `YWJj`. `BinaryNotEquals` exists and is the negation;
+  absent keys and `IfExists` behave as for any operator.
+- **Model:** `BinaryEquals` is `StringEquals` over the base64 text. A value Python cannot decode as base64 is left
+  unmodelled, since IAM would not store the policy.
+- **Result:** 180 compared, 0 disagreements. Test: `test_binary_equals_compares_base64_text`.
+
 ## Modelling gaps (fixed with AWS's Service Authorization Reference)
 
 ### 2. Actions apply only to their own resource types
@@ -194,3 +206,4 @@ hand and then checked against AWS. Each one is either a Reach bug that is now fi
 | 51 | 600 | 320 | 0 | random cases with IPv6 networks and sources, malformed networks |
 | num_probe | 2090 | 1615 | 0 | finding 9: decimals, signs, exponents, precision, invalid values |
 | 81 | 500 | 282 | 0 | random cases with decimal, signed, exponent and invalid numbers |
+| binary_probe | 180 | 180 | 0 | finding 10: BinaryEquals and BinaryNotEquals |

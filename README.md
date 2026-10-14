@@ -7,10 +7,12 @@
 
 **Prove what cloud credentials, and the AI agents holding them, can actually reach.**
 
-AI agents run with real credentials: an AWS profile on a laptop, a GitHub token in an MCP config, a write token in a CI
-job. Reach finds those agents and the credentials they can use. It proves what those credentials can do in AWS. And it
-reports the agents that combine untrusted input, private data and a way to send data out (the *lethal trifecta*), with
-the cheapest way to break each one.
+Reach encodes AWS IAM (identity policies, boundaries, SCPs, RCPs, resource policies and their conditions) as
+constraints for the Z3 solver, so every DENIED is a proof and every ALLOWED comes with a concrete request, re-checked by
+an independent evaluator and validated against AWS's own policy simulator. It then maps each AI agent on a machine or in
+CI to the credentials, tools and text it can reach, scans that text for planted instructions and tool poisoning, and
+flags the agents that combine untrusted input, private data and a way to send data out (the *lethal trifecta*), with the
+cheapest way to break each one.
 
 ```bash
 pip install reach-security
@@ -194,7 +196,7 @@ Alerts keep their identity when lines move, and no secret value is ever written 
 These are always reported as `UNKNOWN` rather than guessed: set operators with numeric, date, IP or `Bool` operators,
 or with `IfExists`; multi-valued keys without a set operator; policy variables over IP, time or multi-valued keys or
 inside ARN operators; IP networks AWS cannot parse, when the key is present; numbers spelled other than as a plain
-decimal in a request (`+5`, `1e1`, non-ASCII digits); `Binary*`.
+decimal in a request (`+5`, `1e1`, non-ASCII digits); `Binary*` values that are not base64 (IAM rejects them).
 Whether a `Principal: "*"` grant is capped by a permissions boundary or session policy is reported as `UNKNOWN` until verified against AWS. See the [roadmap](ROADMAP.md).
 
 ## How Reach checks itself

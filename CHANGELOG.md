@@ -11,6 +11,8 @@
   subagent descriptions are checked by Reach itself (secrets plus concealment, override phrasing, shadowing,
   `<IMPORTANT>` blocks); whole files are scanned with Husk when installed (`reach-security[husk]`). Planted
   instructions complete the trifecta's untrusted-input leg with no human gate. SARIF rules REACH005 and REACH006.
+- `BinaryEquals` and `BinaryNotEquals`: the base64 text is compared as text, without decoding (`YWI=` is not
+  `YWJ=`), as measured with `validation/binary_probe.py` (finding 10: 180 cases, 0 disagreements).
 - Numeric operators: decimals, signs, exponents and leading zeros, compared exactly as AWS does (BigDecimal, not
   floating point). An invalid request value makes every Numeric operator false, as measured
   (`validation/num_probe.py`, finding 9: 1,615 cases, 0 disagreements).

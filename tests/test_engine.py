@@ -249,19 +249,19 @@ def test_principal_arn_and_tags_are_fixed_from_the_principal():
 
 
 def unmodelled_allow():
-    # Binary* operators are not modelled.
-    return allow("s3:*", Condition={"BinaryEquals": {"s3:max-keys": "QUJD"}})
+    # A huge exponent is valid for AWS but outside Reach's model.
+    return allow("s3:*", Condition={"NumericLessThan": {"s3:max-keys": "1e5000"}})
 
 
 def test_unmodelled_allow_condition_gives_unknown_not_allowed():
     r = can([pol(unmodelled_allow())], "s3:ListBucket", "*")
     assert r.verdict is Verdict.UNKNOWN
-    assert any("BinaryEquals" in a for a in r.assumptions)
+    assert any("NumericLessThan" in a for a in r.assumptions)
 
 
 def test_unmodelled_deny_condition_gives_unknown():
-    binary_deny = deny("s3:*", Condition={"BinaryEquals": {"s3:max-keys": "QUJD"}})
-    r = can([pol(allow("s3:*"), binary_deny)], "s3:GetObject", "*")
+    huge_deny = deny("s3:*", Condition={"NumericGreaterThan": {"s3:max-keys": "1e5000"}})
+    r = can([pol(allow("s3:*"), huge_deny)], "s3:GetObject", "*")
     # The key only appears in an unmodelled condition, so it must not leak into the witness.
     assert "s3:max-keys" not in r.witness.context
     assert r.verdict is Verdict.UNKNOWN
@@ -552,6 +552,24 @@ def test_ignore_case_set_operator_and_text_iam_rejects():
     # IAM only accepts Latin-1 in a policy; anything else is not modelled rather than guessed.
     greek = [pol(allow("s3:ListBucket", Condition={"StringEqualsIgnoreCase": {"s3:prefix": "σ"}}))]
     assert can(greek, "s3:ListBucket", "*").verdict is Verdict.UNKNOWN
+
+
+def test_binary_equals_compares_base64_text():
+    # Measured on AWS (validation/binary_probe.py): no decoding, so "YWI=" and "YWJ=" (both "ab") differ.
+    p = [pol(allow("s3:ListBucket", Condition={"BinaryEquals": {"s3:prefix": ["YWI=", "eHl6"]}}))]
+
+    def prefix(value):
+        return can(p, "s3:ListBucket", "*", context={"s3:prefix": value}).verdict
+
+    assert prefix("YWI=") is Verdict.ALLOWED and prefix("eHl6") is Verdict.ALLOWED
+    assert prefix("YWJ=") is Verdict.DENIED and prefix("YWI") is Verdict.DENIED and prefix("ab") is Verdict.DENIED
+    assert can(p, "s3:ListBucket", "*").witness.context["s3:prefix"] in ("YWI=", "eHl6")
+    negated = [pol(allow("s3:ListBucket"), deny("s3:*", Condition={"BinaryNotEquals": {"s3:prefix": "YWJj"}}))]
+    r = can(negated, "s3:ListBucket", "*")
+    assert r.verdict is Verdict.ALLOWED and r.witness.context["s3:prefix"] == "YWJj"
+    # IAM rejects a value that is not base64; such a policy is not modelled.
+    bad = [pol(allow("s3:ListBucket", Condition={"BinaryEquals": {"s3:prefix": "not base64!"}}))]
+    assert can(bad, "s3:ListBucket", "*").verdict is Verdict.UNKNOWN
 
 
 def test_date_conditions_share_one_clock():

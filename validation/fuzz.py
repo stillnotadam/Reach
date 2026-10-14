@@ -100,9 +100,10 @@ POSITIVE = ["StringEquals", "StringLike", "StringEqualsIfExists", "StringLikeIfE
 NEGATED = ["StringNotEquals", "StringNotLike", "StringNotEqualsIfExists", "StringNotEqualsIgnoreCase"]
 # Request values only: other spellings of policy values. "K" is the Kelvin sign, which lowercases to k.
 # (Policies stay Latin-1, the only text IAM accepts in one.)
-SPELLINGS = {"s3:prefix": ["HOME/A", "home/K", "Home/K"], "aws:SourceVpc": ["Vpc-2", "VPC-10"]}
+SPELLINGS = {"s3:prefix": ["HOME/A", "home/K", "Home/K", "aG9tZS8=", "YWJ=", "YWI="],
+             "aws:SourceVpc": ["Vpc-2", "VPC-10"]}  # fmt: skip
 UNMODELLED = [
-    ("BinaryEquals", "s3:prefix", "QUJD"),
+    ("BinaryEquals", "s3:prefix", "not base64!"),  # IAM rejects it; Reach leaves it unmodelled
     ("ForAnyValue:StringEquals", "aws:TagKeys", "env"),
     ("StringEquals", "s3:prefix", "${aws:username}/"),
     ("StringLike", "aws:SourceIp", "10.*"),  # string operator on an IP key
@@ -172,6 +173,9 @@ def _condition(rng: random.Random) -> tuple[str, str, list[str]]:
     if roll < 0.52:
         op = rng.choice(["ArnLike", "ArnNotLike", "ArnEquals"])
         return op, "aws:PrincipalArn", [rng.choice([*PRINCIPALS, "arn:aws:iam::*:role/app-*", "arn:aws:iam::*:user/*"])]
+    if roll < 0.55:
+        op = rng.choice(["BinaryEquals", "BinaryNotEquals", "BinaryEqualsIfExists"])
+        return op, "s3:prefix", rng.sample(["aG9tZS8=", "YWI=", "dG1wLw==", ""], k=rng.randint(1, 2))
     if roll < 0.58:
         return rng.choice(["StringEquals", "StringNotEquals"]), "aws:PrincipalTag/team", [rng.choice(["data", "web"])]
     key = rng.choice(list(KEYS))
