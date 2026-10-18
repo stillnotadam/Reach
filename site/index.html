@@ -4,16 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Reach</title>
-<meta name="description" content="Reach proves what cloud credentials, and the AI agents holding them, can reach in AWS. Every DENIED is a proof; every ALLOWED comes with a request that gets through.">
+<meta name="description" content="Reach proves what cloud credentials, and the AI agents holding them, can reach in AWS. Every answer is a request that gets through or a proof that none does.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=STIX+Two+Text:ital,wght@0,400;0,600;1,400&family=Public+Sans:wght@400;500;600&family=Fragment+Mono&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=STIX+Two+Text:ital,wght@0,400;1,400&family=Public+Sans:wght@400;500;600&family=Fragment+Mono&display=swap" rel="stylesheet">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%232a4bd7'/%3E%3Cpath d='M10 7v18M10 16h13' stroke='%23fff' stroke-width='3.2' stroke-linecap='round'/%3E%3C/svg%3E">
 <style>
-/* Layout: a left-aligned reading column; the opening text sits beside a working question panel, and every later
-   section is plain prose over ruled tables, the way a proof or an audit write-up is set. */
+/* Layout: one narrow left-aligned column with a lot of air; the question panel is the only object on the page. */
 :root {
-  --paper: #f7f8fa; --sheet: #ffffff; --ink: #161a22; --muted: #5b6270; --rule: #dfe2e8; --tint: #eef1f6;
+  --paper: #f7f8fa; --sheet: #ffffff; --ink: #161a22; --muted: #646b78; --rule: #e1e4ea; --tint: #eef1f6;
   --accent: #2a4bd7; --allow: #c4352b; --deny: #237a4b; --unknown: #9a6700;
   --display: "STIX Two Text", "STIX Two", Cambria, Georgia, serif;
   --body: "Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -22,339 +21,127 @@
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --paper: #0e1116; --sheet: #151922; --ink: #e6e8ec; --muted: #9aa1ad; --rule: #262b34; --tint: #1b2030;
+    --paper: #0e1116; --sheet: #151922; --ink: #e6e8ec; --muted: #9aa1ad; --rule: #262b34; --tint: #1c2130;
     --accent: #8ea6ff; --allow: #ff8a7f; --deny: #6fd39b; --unknown: #f0c055; color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-  --paper: #0e1116; --sheet: #151922; --ink: #e6e8ec; --muted: #9aa1ad; --rule: #262b34; --tint: #1b2030;
+  --paper: #0e1116; --sheet: #151922; --ink: #e6e8ec; --muted: #9aa1ad; --rule: #262b34; --tint: #1c2130;
   --accent: #8ea6ff; --allow: #ff8a7f; --deny: #6fd39b; --unknown: #f0c055; color-scheme: dark;
 }
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
-body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.65 var(--body); }
-a { color: var(--accent); text-underline-offset: 3px; }
-a:hover { text-decoration-thickness: 2px; }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.6 var(--body); }
+a { color: inherit; text-underline-offset: 3px; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.page { max-width: 1120px; margin: 0 auto; padding-inline: max(16px, 4vw); }
-code, .mono { font-family: var(--mono); font-size: 0.9em; }
-p code, td code, li code { background: var(--tint); border-radius: 4px; padding: 1px 5px; }
+.page { max-width: 720px; margin: 0 auto; padding-inline: 20px; padding-block: 28px 64px; }
 
-/* masthead */
-.mast { display: flex; align-items: center; gap: 28px; padding-block: 22px; border-bottom: 1px solid var(--rule); }
-.mark { display: flex; align-items: baseline; gap: 10px; color: var(--ink); text-decoration: none; }
-.mark .t { font: 600 26px/1 var(--display); color: var(--accent); }
-.mark .n { font: 15px var(--mono); letter-spacing: 0.02em; }
-.mast nav { margin-left: auto; display: flex; flex-wrap: wrap; gap: 6px 22px; font-size: 14.5px; }
-.mast nav a { color: var(--muted); text-decoration: none; }
-.mast nav a:hover { color: var(--ink); }
+header { display: flex; align-items: baseline; justify-content: space-between; }
+.mark { display: flex; align-items: baseline; gap: 9px; text-decoration: none; }
+.mark .t { font: 24px/1 var(--display); color: var(--accent); }
+.mark .n { font: 15px var(--mono); }
+header nav { display: flex; gap: 20px; font-size: 14.5px; color: var(--muted); }
+header nav a { text-decoration: none; }
+header nav a:hover { color: var(--ink); }
 
-/* opening */
-.open { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: 56px; padding-block: 64px 72px; align-items: start; }
-@media (max-width: 920px) { .open { grid-template-columns: 1fr; gap: 40px; padding-block: 40px 56px; } }
-h1 { font: 400 clamp(36px, 5.2vw, 58px)/1.06 var(--display); letter-spacing: -0.012em; margin: 0 0 22px; text-wrap: balance; }
-h1 em { font-style: italic; color: var(--accent); }
-.lede { font-size: 18px; color: var(--muted); max-width: 34em; margin: 0 0 28px; }
-.install { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
-.install code { font-size: 15px; background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; padding: 9px 14px; }
-.install button { font: 500 14px var(--body); color: var(--ink); background: none; border: 0; padding: 4px 0; cursor: pointer;
-  text-decoration: underline; text-underline-offset: 3px; }
-.facts { display: flex; flex-wrap: wrap; gap: 6px 26px; margin: 34px 0 0; padding: 0; list-style: none; font-size: 14px; color: var(--muted); }
-.facts b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+h1 { font: 400 clamp(38px, 7vw, 56px)/1.08 var(--display); letter-spacing: -0.01em; margin: 96px 0 20px; text-wrap: balance; }
+h1 em { color: var(--accent); }
+.lede { font-size: 18px; color: var(--muted); margin: 0 0 28px; max-width: 34em; }
+.install { display: inline-flex; align-items: center; gap: 14px; font: 14.5px var(--mono); }
+.install code { background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; padding: 8px 14px; }
+.install button { font: 500 14px var(--body); color: var(--muted); background: none; border: 0; cursor: pointer; padding: 0; }
+.install button:hover { color: var(--ink); }
 
-/* the question panel */
-.ask { background: var(--sheet); border: 1px solid var(--rule); border-radius: 10px; }
-.ask header { padding: 18px 22px 14px; border-bottom: 1px solid var(--rule); }
-.ask h2 { font: 600 13px var(--body); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin: 0; }
-.ask header p { margin: 4px 0 0; font-size: 14px; color: var(--muted); }
-.who { display: flex; gap: 6px; padding: 16px 22px 0; flex-wrap: wrap; }
-.who button { font: 14px var(--mono); padding: 6px 12px; border-radius: 6px; border: 1px solid var(--rule); background: none;
-  color: var(--muted); cursor: pointer; }
-.who button[aria-pressed="true"] { color: var(--ink); border-color: var(--ink); }
-.qs { list-style: none; margin: 12px 0 0; padding: 0 12px; }
-.qs button { width: 100%; text-align: left; font: 15px var(--body); color: var(--ink); background: none; border: 0;
-  border-radius: 6px; padding: 7px 10px; cursor: pointer; display: flex; justify-content: space-between; gap: 12px; }
+.ask { margin-top: 72px; background: var(--sheet); border: 1px solid var(--rule); border-radius: 10px; }
+.bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding: 14px 18px; border-bottom: 1px solid var(--rule); }
+.bar span { font-size: 14px; color: var(--muted); }
+.who { display: flex; gap: 4px; }
+.who button { font: 13.5px var(--mono); padding: 5px 10px; border-radius: 6px; border: 0; background: none; color: var(--muted); cursor: pointer; }
+.who button[aria-pressed="true"] { background: var(--tint); color: var(--ink); }
+.qs { list-style: none; margin: 0; padding: 8px; }
+.qs button { width: 100%; display: flex; justify-content: space-between; gap: 16px; text-align: left; font: 15px var(--body);
+  color: var(--ink); background: none; border: 0; border-radius: 6px; padding: 8px 10px; cursor: pointer; }
 .qs button:hover { background: var(--tint); }
-.qs button[aria-pressed="true"] { background: var(--tint); font-weight: 600; }
-.qs .v { font: 12px var(--mono); text-transform: uppercase; letter-spacing: 0.04em; flex: none; }
-.answer { margin-top: 12px; border-top: 1px solid var(--rule); padding: 20px 22px 22px; }
-.verdict { font: 400 34px/1.1 var(--display); margin: 0 0 4px; }
-.verdict.allowed { color: var(--allow); } .verdict.denied { color: var(--deny); } .verdict.unknown { color: var(--unknown); }
-.v.allowed { color: var(--allow); } .v.denied { color: var(--deny); } .v.unknown { color: var(--unknown); }
-.gloss { margin: 0 0 16px; color: var(--muted); font-size: 14.5px; }
-.ev { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 6px 14px; margin: 0; font-size: 14px; }
-.ev dt { color: var(--muted); }
-.ev dd { margin: 0; font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere; }
-.cmd { margin: 18px 0 0; font: 12.5px/1.5 var(--mono); color: var(--muted); overflow-wrap: anywhere; padding-top: 14px;
-  border-top: 1px dashed var(--rule); }
-@media (max-width: 480px) { .ev { grid-template-columns: 1fr; gap: 2px; } .ev dd { margin-bottom: 8px; } }
+.qs button[aria-pressed="true"] { background: var(--tint); }
+.qs .v { font: 12px var(--mono); letter-spacing: 0.04em; text-transform: uppercase; flex: none; padding-top: 2px; }
+.answer { border-top: 1px solid var(--rule); padding: 20px 18px 22px; display: grid; gap: 10px; }
+.verdict { font: 32px/1 var(--display); margin: 0; }
+.allowed { color: var(--allow); } .denied { color: var(--deny); } .unknown { color: var(--unknown); }
+.evidence { margin: 0; font: 13.5px/1.6 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+.evidence b { font: 500 13.5px var(--body); color: var(--ink); }
 
-/* sections */
-section { padding-block: 64px; border-top: 1px solid var(--rule); }
-.head { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); gap: 56px; align-items: start; }
-@media (max-width: 920px) { .head { grid-template-columns: 1fr; gap: 20px; } }
-h2.sec { font: 400 clamp(28px, 3.4vw, 38px)/1.12 var(--display); margin: 0; text-wrap: balance; }
-.prose p { margin: 0 0 16px; max-width: 38em; }
-.prose p:last-child { margin-bottom: 0; }
-
-dl.scope { margin: 0; display: grid; grid-template-columns: minmax(0, 220px) minmax(0, 1fr); border-top: 1px solid var(--rule); }
-dl.scope dt, dl.scope dd { padding: 14px 0; border-bottom: 1px solid var(--rule); margin: 0; }
-dl.scope dt { font-weight: 600; padding-right: 20px; }
-dl.scope dd { color: var(--muted); }
-@media (max-width: 640px) { dl.scope { grid-template-columns: 1fr; } dl.scope dt { border-bottom: 0; padding-bottom: 0; } }
-
-ol.steps { list-style: none; margin: 0; padding: 0; counter-reset: s; display: grid; gap: 0; }
-ol.steps li { counter-increment: s; display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 4px 12px; padding: 16px 0;
-  border-bottom: 1px solid var(--rule); }
-ol.steps li:first-child { border-top: 1px solid var(--rule); }
-ol.steps li::before { content: counter(s); font: 400 24px/1.2 var(--display); color: var(--accent); grid-row: span 2; }
-ol.steps b { font-weight: 600; }
-ol.steps span { color: var(--muted); }
-
-.tablewrap { overflow-x: auto; }
-table.m { width: 100%; border-collapse: collapse; font-size: 14.5px; min-width: 620px; }
-table.m th { text-align: left; font: 600 12.5px var(--body); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
-  padding: 0 16px 10px 0; border-bottom: 1px solid var(--ink); }
-table.m td { padding: 14px 16px 14px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
-table.m td:first-child { font-weight: 600; white-space: nowrap; }
-table.m td.n { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; color: var(--muted); }
-table.m th.n { text-align: right; }
-.note { font-size: 14px; color: var(--muted); margin: 18px 0 0; }
-
-.report { margin-top: 30px; border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; background: var(--sheet); }
-.report .cap { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 18px; font-size: 14px;
-  color: var(--muted); border-bottom: 1px solid var(--rule); }
-.report iframe { display: block; width: 100%; height: 640px; border: 0; background: var(--paper); }
-
-pre.file { margin: 0; background: var(--sheet); border: 1px solid var(--rule); border-radius: 10px; padding: 18px 20px;
-  font: 13.5px/1.7 var(--mono); overflow-x: auto; }
-pre.file .c { color: var(--muted); }
-.filecap { font: 13px var(--mono); color: var(--muted); margin: 0 0 8px; }
-
-footer { border-top: 1px solid var(--rule); padding-block: 28px 48px; font-size: 14px; color: var(--muted);
-  display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px 24px; }
-footer a { color: var(--muted); }
-@media (prefers-reduced-motion: no-preference) { .answer { animation: in .25s ease-out; } }
-@keyframes in { from { opacity: .4; } to { opacity: 1; } }
+.facts { margin: 40px 0 0; font-size: 14.5px; color: var(--muted); }
+.facts a { color: var(--ink); }
+@media (prefers-reduced-motion: no-preference) { .answer { animation: in .2s ease-out; } }
+@keyframes in { from { opacity: .5; } to { opacity: 1; } }
 </style>
 </head>
 <body>
 <div class="page">
+  <header>
+    <a class="mark" href="#" aria-label="Reach"><span class="t" aria-hidden="true">&#8866;</span><span class="n">reach</span></a>
+    <nav aria-label="Links">
+      <a href="https://github.com/ctrl-adam/Reach">GitHub</a>
+      <a href="https://pypi.org/project/reach-security/">PyPI</a>
+    </nav>
+  </header>
 
-<header class="mast">
-  <a class="mark" href="#" aria-label="Reach">
-    <span class="t" aria-hidden="true">&#8866;</span><span class="n">reach</span>
-  </a>
-  <nav aria-label="Sections">
-    <a href="#scope">What it checks</a>
-    <a href="#method">Method</a>
-    <a href="#measured">Measured on AWS</a>
-    <a href="#account">Example report</a>
-    <a href="https://github.com/ctrl-adam/Reach">GitHub</a>
-  </nav>
-</header>
+  <h1>Ask what a credential can do. Get a <em>proof.</em></h1>
+  <p class="lede">Reach checks AWS IAM policies with the Z3 solver. Every answer is a request that gets through, or a
+    proof that none does. It also finds the AI agents holding those credentials.</p>
+  <div class="install"><code id="cmd">pip install reach-security</code><button type="button" id="copy">Copy</button></div>
 
-<div class="open">
-  <div>
-    <h1>Ask what a credential can do. Get a <em>proof</em>, or the request that gets through.</h1>
-    <p class="lede">Reach reads AWS IAM policies, permissions boundaries, SCPs, RCPs and resource policies, and decides
-      each question with the Z3 solver. It also finds the AI agents on a machine or in CI that hold those credentials,
-      and flags the ones an attacker could instruct to send data out.</p>
-    <div class="install">
-      <code id="cmd">pip install reach-security</code>
-      <button type="button" id="copy">Copy</button>
-    </div>
-    <ul class="facts">
-      <li><b>9,581</b> cases compared with AWS's policy simulator</li>
-      <li><b>0</b> open disagreements</li>
-      <li><b>5,000</b> principals audited in <b>40.5 s</b></li>
-    </ul>
-  </div>
-
-  <div class="ask" aria-labelledby="ask-title">
-    <header>
-      <h2 id="ask-title">Try it on the example account</h2>
-      <p>Answers computed by Reach on <a href="https://github.com/ctrl-adam/Reach/tree/main/examples/reach-goat">reach-goat</a> when this site was built.</p>
-    </header>
-    <div class="who" id="who" role="group" aria-label="Principal"></div>
+  <div class="ask" aria-label="Example questions">
+    <div class="bar"><span>Example account</span><div class="who" id="who" role="group" aria-label="Principal"></div></div>
     <ul class="qs" id="qs"></ul>
     <div class="answer" id="answer" aria-live="polite"></div>
   </div>
-</div>
 
-<section id="scope">
-  <div class="head">
-    <h2 class="sec">What it checks</h2>
-    <dl class="scope">
-      <dt>Identity and resource policies</dt>
-      <dd>Identity policies, permissions boundaries, session policies, bucket and key policies, and role trust policies,
-        with same-account and cross-account rules.</dd>
-      <dt>Organizations</dt>
-      <dd>SCPs from the root down to the account and RCPs with every documented exemption, from a read-only export of the
-        organization.</dd>
-      <dt>Conditions</dt>
-      <dd>Strings, ARNs, IPv4 and IPv6 ranges, exact decimals, dates, case-insensitive text, base64, and the
-        <code>ForAnyValue</code> and <code>ForAllValues</code> set operators, each as AWS evaluates it.</dd>
-      <dt>Whole accounts</dt>
-      <dd>Every user and role against nine high-impact questions, in parallel, as a terminal matrix, JSON or an HTML
-        report.</dd>
-      <dt>AI agents</dt>
-      <dd>Claude Code, Cursor, VS Code, Windsurf and agents in GitHub Actions: their MCP servers, shell mode,
-        pre-approved commands and the credentials each can use, and whether one agent combines untrusted input, private
-        data and a way to send data out.</dd>
-      <dt>Planted instructions</dt>
-      <dd>Instruction files, skills and MCP tool descriptions checked for tool poisoning, with
-        <a href="https://github.com/ctrl-adam/Husk">Husk</a> for whole files.</dd>
-    </dl>
-  </div>
-</section>
-
-<section id="method">
-  <div class="head">
-    <div class="prose">
-      <h2 class="sec">How a verdict is reached</h2>
-      <p style="margin-top:16px">A question such as <code>s3:*</code> on <code>*</code> ranges over thousands of actions,
-        every resource and every request context at once. Reach answers it in five steps, and each answer carries its
-        evidence.</p>
-    </div>
-    <ol class="steps">
-      <li><b>Load the policies.</b><span>An account snapshot from <code>get-account-authorization-details</code>, plus
-        any organization export and resource policies.</span></li>
-      <li><b>Group the actions.</b><span>22,080 real actions from AWS's Service Authorization Reference, split into the
-        few classes the policies actually treat differently.</span></li>
-      <li><b>Encode them for the solver.</b><span>ARNs segment by segment, and every condition key in its own type, so
-        a wildcard cannot cross a colon and <code>10.0.0.0/8</code> never matches an IPv6 address.</span></li>
-      <li><b>Solve twice.</b><span>Once assuming unmodelled conditions help the request and once assuming they block it.
-        A request allowed in both is ALLOWED; one allowed in neither is DENIED; anything else is UNKNOWN, with the
-        assumption named.</span></li>
-      <li><b>Check the answer.</b><span>The example request is replayed through a second evaluator that shares no code
-        with the solver. If they disagree, Reach reports an error instead of a verdict.</span></li>
-    </ol>
-  </div>
-</section>
-
-<section id="measured">
-  <div class="head" style="margin-bottom:28px">
-    <h2 class="sec">Measured on AWS</h2>
-    <div class="prose"><p>The IAM documentation leaves edge cases open. Reach sends them to AWS's policy simulator,
-      models the result, and keeps each probe in the repository so the measurement can be repeated.</p></div>
-  </div>
-  <div class="tablewrap">
-    <table class="m">
-      <thead><tr><th>Behaviour</th><th>What AWS does</th><th class="n">Cases compared</th></tr></thead>
-      <tbody>
-        <tr><td>Numbers</td><td>Exact decimals: <code>9007199254740993</code> is not <code>9007199254740992</code>. An
-          invalid request value fails every operator, <code>NumericNotEquals</code> included.</td><td class="n">1,615</td></tr>
-        <tr><td>Policy variables</td><td><code>${aws:username}</code> in a <code>Resource</code> is substituted only under
-          version <code>2012-10-17</code>; older policies read it as text.</td><td class="n">652</td></tr>
-        <tr><td>Bool</td><td><code>Bool</code> reads any letter case of <code>true</code> as true and everything
-          else as false, for every key.</td><td class="n">1,771</td></tr>
-        <tr><td>IP addresses</td><td>The families never mix: <code>0.0.0.0/0</code> matches no IPv6 source, and
-          <code>::ffff:10.1.2.3</code> counts as IPv4.</td><td class="n">460</td></tr>
-        <tr><td>Ignore case</td><td>Full Unicode lowercase: the Kelvin sign matches <code>k</code>; long s does not match
-          <code>s</code>, though Java's rule says it does.</td><td class="n">42</td></tr>
-        <tr><td>Binary</td><td>Base64 is compared as text: <code>YWI=</code> and <code>YWJ=</code> differ, though both
-          decode to <code>ab</code>.</td><td class="n">180</td></tr>
-        <tr><td>Account grants</td><td>A bucket policy naming the account only delegates to the account's IAM policies.
-          AWS's simulator says otherwise; a live S3 test settled it.</td><td class="n">live test</td></tr>
-      </tbody>
-    </table>
-  </div>
-  <p class="note">Every finding, with its probe, numbers and the tests that pin it:
-    <a href="https://github.com/ctrl-adam/Reach/blob/main/validation/FINDINGS.md">validation/FINDINGS.md</a>.</p>
-</section>
-
-<section id="account">
-  <div class="head">
-    <h2 class="sec">A whole account, audited</h2>
-    <div class="prose"><p>The report below is <code>reach audit --html</code>, run when this site was built on a
-      synthetic account of __DEMO_PRINCIPALS__ users and roles: team groups, permissions boundaries, tag-based access,
-      <code>NotAction</code> policies and roles trusted through OIDC. It made __DEMO_DECISIONS__ decisions in
-      __DEMO_SECONDS__ seconds. Select a cell to see the request that gets through and the statements that allow it.</p></div>
-  </div>
-  <div class="report">
-    <div class="cap"><span>synthetic-account.json, no real account data</span><a href="demo/report.html" target="_blank" rel="noopener">Open the report on its own</a></div>
-    <iframe src="demo/report.html" title="Reach audit report of a synthetic account" loading="lazy"></iframe>
-  </div>
-</section>
-
-<section id="ci">
-  <div class="head">
-    <div class="prose">
-      <h2 class="sec">In CI</h2>
-      <p style="margin-top:16px">The GitHub Action scans the repository's agents and workflows and uploads the findings
-        to code scanning. Each alert points at the line that causes it, and no secret value is written to the
-        report.</p>
-    </div>
-    <div>
-      <p class="filecap">.github/workflows/reach.yml</p>
-<pre class="file">permissions:
-  contents: read
-  security-events: write
-steps:
-  - uses: actions/checkout@v7
-  - uses: ctrl-adam/Reach@v0.2.1
-    with:
-      fail-on: critical   <span class="c"># fail the job on a critical lethal trifecta</span></pre>
-    </div>
-  </div>
-</section>
-
-<footer>
-  <span>Reach is open source under AGPL-3.0.</span>
-  <span><a href="https://github.com/ctrl-adam/Reach">GitHub</a> &middot; <a href="https://pypi.org/project/reach-security/">PyPI</a> &middot; <a href="https://github.com/ctrl-adam/Reach/blob/main/CHANGELOG.md">Changelog</a></span>
-</footer>
-
+  <p class="facts">Checked against AWS's own policy simulator on 9,581 cases, with no open disagreements.
+    <a href="https://github.com/ctrl-adam/Reach/blob/main/validation/FINDINGS.md">Findings</a> &middot;
+    <a href="demo/report.html">Example account audit</a></p>
 </div>
 
 <script type="application/json" id="answers">__ANSWERS__</script>
 <script>
 "use strict";
 const ANSWERS = JSON.parse(document.getElementById("answers").textContent);
-const GLOSS = {
-  allowed: "A request exists that gets through every policy. Here it is, checked by a second evaluator.",
-  denied: "No request gets through. The solver proved the policies unsatisfiable for this question.",
-  unknown: "The answer depends on a condition Reach does not model. The assumption is named below.",
-};
 const principals = [...new Set(ANSWERS.map((a) => a.principal))];
 let principal = principals[0], question = ANSWERS[0].question;
 
 function el(tag, attrs = {}, ...kids) {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) k === "class" ? (e.className = v) : e.setAttribute(k, v);
-  for (const kid of kids) e.append(kid);
+  e.append(...kids);
   return e;
 }
-function row(dl, term, value) { dl.append(el("dt", {}, term), el("dd", {}, value)); }
+function line(label, text) { return el("p", { class: "evidence" }, el("b", {}, label + " "), text); }
 
 function render() {
-  const who = document.getElementById("who");
-  who.replaceChildren(...principals.map((p) => {
-    const b = el("button", { type: "button", "aria-pressed": String(p === principal) }, p);
+  document.getElementById("who").replaceChildren(...principals.map((p) => {
+    const b = el("button", { type: "button", "aria-pressed": String(p === principal) }, p.split("/")[1]);
     b.addEventListener("click", () => { principal = p; render(); });
     return b;
   }));
-  const qs = document.getElementById("qs");
-  qs.replaceChildren(...ANSWERS.filter((a) => a.principal === principal).map((a) => {
+  document.getElementById("qs").replaceChildren(...ANSWERS.filter((a) => a.principal === principal).map((a) => {
     const b = el("button", { type: "button", "aria-pressed": String(a.question === question) },
       el("span", {}, "Can it " + a.question + "?"), el("span", { class: "v " + a.verdict }, a.verdict));
     b.addEventListener("click", () => { question = a.question; render(); });
     return el("li", {}, b);
   }));
   const a = ANSWERS.find((x) => x.principal === principal && x.question === question);
-  const dl = el("dl", { class: "ev" });
-  row(dl, "Question", a.action + " on " + a.resource);
-  if (a.witness) {
-    row(dl, a.verdict === "allowed" ? "Request" : "If allowed", a.witness.action + " on " + a.witness.resource);
-    for (const [k, v] of Object.entries(a.witness.context || {})) row(dl, "", k + " = " + JSON.stringify(v));
+  const parts = [el("p", { class: "verdict " + a.verdict }, a.verdict[0].toUpperCase() + a.verdict.slice(1))];
+  if (a.verdict === "allowed" && a.witness) {
+    const ctx = Object.entries(a.witness.context || {}).map(([k, v]) => ` with ${k} = ${v}`).join("");
+    parts.push(line("Request", `${a.witness.action} on ${a.witness.resource}${ctx}`));
+    if (a.allowed_by.length) parts.push(line("Allowed by", a.allowed_by.join(", ")));
+  } else if (a.verdict === "denied") {
+    parts.push(line("Proof", "no request satisfies the policies. " + (a.reasons[0] || "")));
+  } else {
+    parts.push(line("Depends on", a.assumptions[0] || a.reasons[0] || ""));
   }
-  if (a.allowed_by.length) row(dl, "Allowed by", a.allowed_by.join(", "));
-  if (a.verdict === "denied") row(dl, "Proof", "no request context satisfies the policies (UNSAT)");
-  for (const r of a.reasons) row(dl, "Why", r);
-  for (const r of a.assumptions) row(dl, "Assumes", r);
-  document.getElementById("answer").replaceChildren(
-    el("p", { class: "verdict " + a.verdict }, a.verdict[0].toUpperCase() + a.verdict.slice(1) + "."),
-    el("p", { class: "gloss" }, GLOSS[a.verdict]), dl, el("p", { class: "cmd" }, "$ " + a.command));
+  document.getElementById("answer").replaceChildren(...parts);
 }
 render();
 
