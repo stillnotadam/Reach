@@ -7,12 +7,12 @@
 <meta name="description" content="Reach proves what cloud credentials, and the AI agents holding them, can reach in AWS. Every answer is a request that gets through or a proof that none does.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=STIX+Two+Text:ital,wght@0,400;1,400&family=Public+Sans:wght@400;500;600&family=Fragment+Mono&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=STIX+Two+Text:ital@0;1&family=Public+Sans:wght@400;500&family=Fragment+Mono&display=swap" rel="stylesheet">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%232a4bd7'/%3E%3Cpath d='M10 7v18M10 16h13' stroke='%23fff' stroke-width='3.2' stroke-linecap='round'/%3E%3C/svg%3E">
 <style>
-/* Layout: one narrow left-aligned column with a lot of air; the question panel is the only object on the page. */
+/* Layout: one narrow column, no boxes; the questions are plain ruled rows and the chosen one opens in place. */
 :root {
-  --paper: #f7f8fa; --sheet: #ffffff; --ink: #161a22; --muted: #646b78; --rule: #e1e4ea; --tint: #eef1f6;
+  --paper: #f8f9fb; --ink: #161a22; --muted: #6b7280; --rule: #e3e6ec;
   --accent: #2a4bd7; --allow: #c4352b; --deny: #237a4b; --unknown: #9a6700;
   --display: "STIX Two Text", "STIX Two", Cambria, Georgia, serif;
   --body: "Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -21,94 +21,70 @@
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --paper: #0e1116; --sheet: #151922; --ink: #e6e8ec; --muted: #9aa1ad; --rule: #262b34; --tint: #1c2130;
+    --paper: #0e1116; --ink: #e6e8ec; --muted: #8f96a3; --rule: #252a33;
     --accent: #8ea6ff; --allow: #ff8a7f; --deny: #6fd39b; --unknown: #f0c055; color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-  --paper: #0e1116; --sheet: #151922; --ink: #e6e8ec; --muted: #9aa1ad; --rule: #262b34; --tint: #1c2130;
+  --paper: #0e1116; --ink: #e6e8ec; --muted: #8f96a3; --rule: #252a33;
   --accent: #8ea6ff; --allow: #ff8a7f; --deny: #6fd39b; --unknown: #f0c055; color-scheme: dark;
 }
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
 body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.6 var(--body); }
-a { color: inherit; text-underline-offset: 3px; }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.page { max-width: 720px; margin: 0 auto; padding-inline: 20px; padding-block: 28px 64px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+main { max-width: 640px; margin: 0 auto; padding-inline: 20px; padding-block: 40px 56px; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
 
-header { display: flex; align-items: baseline; justify-content: space-between; }
-.mark { display: flex; align-items: baseline; gap: 9px; text-decoration: none; }
-.mark .t { font: 24px/1 var(--display); color: var(--accent); }
-.mark .n { font: 15px var(--mono); }
-header nav { display: flex; gap: 20px; font-size: 14.5px; color: var(--muted); }
-header nav a { text-decoration: none; }
-header nav a:hover { color: var(--ink); }
+.mark { font: 15px var(--mono); color: var(--muted); }
+.mark span { font-family: var(--display); color: var(--accent); margin-right: 6px; }
+h1 { font: 400 clamp(36px, 7vw, 52px)/1.1 var(--display); letter-spacing: -0.01em; margin: 120px 0 16px; text-wrap: balance; }
+.lede { color: var(--muted); margin: 0 0 22px; }
+#cmd { font: 14.5px var(--mono); color: var(--ink); }
+#cmd::after { content: attr(data-note); margin-left: 12px; font: 13px var(--body); color: var(--muted); }
 
-h1 { font: 400 clamp(38px, 7vw, 56px)/1.08 var(--display); letter-spacing: -0.01em; margin: 96px 0 20px; text-wrap: balance; }
-h1 em { color: var(--accent); }
-.lede { font-size: 18px; color: var(--muted); margin: 0 0 28px; max-width: 34em; }
-.install { display: inline-flex; align-items: center; gap: 14px; font: 14.5px var(--mono); }
-.install code { background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; padding: 8px 14px; }
-.install button { font: 500 14px var(--body); color: var(--muted); background: none; border: 0; cursor: pointer; padding: 0; }
-.install button:hover { color: var(--ink); }
-
-.ask { margin-top: 72px; background: var(--sheet); border: 1px solid var(--rule); border-radius: 10px; }
-.bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
-  padding: 14px 18px; border-bottom: 1px solid var(--rule); }
-.bar span { font-size: 14px; color: var(--muted); }
-.who { display: flex; gap: 4px; }
-.who button { font: 13.5px var(--mono); padding: 5px 10px; border-radius: 6px; border: 0; background: none; color: var(--muted); cursor: pointer; }
-.who button[aria-pressed="true"] { background: var(--tint); color: var(--ink); }
-.qs { list-style: none; margin: 0; padding: 8px; }
-.qs button { width: 100%; display: flex; justify-content: space-between; gap: 16px; text-align: left; font: 15px var(--body);
-  color: var(--ink); background: none; border: 0; border-radius: 6px; padding: 8px 10px; cursor: pointer; }
-.qs button:hover { background: var(--tint); }
-.qs button[aria-pressed="true"] { background: var(--tint); }
-.qs .v { font: 12px var(--mono); letter-spacing: 0.04em; text-transform: uppercase; flex: none; padding-top: 2px; }
-.answer { border-top: 1px solid var(--rule); padding: 20px 18px 22px; display: grid; gap: 10px; }
-.verdict { font: 32px/1 var(--display); margin: 0; }
+.who { margin: 96px 0 10px; font-size: 14px; color: var(--muted); }
+.who button { color: var(--muted); font-family: var(--mono); font-size: 13.5px; margin-left: 10px; }
+.who button[aria-pressed="true"] { color: var(--ink); text-decoration: underline; text-underline-offset: 4px; }
+ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule); }
+li { border-bottom: 1px solid var(--rule); }
+.q { width: 100%; display: flex; justify-content: space-between; gap: 16px; text-align: left; padding: 12px 0; }
+.q:hover span:first-child { color: var(--ink); }
+.q span:first-child { color: var(--muted); }
+.q[aria-expanded="true"] span:first-child { color: var(--ink); }
+.v { font: 12px var(--mono); letter-spacing: 0.05em; text-transform: uppercase; padding-top: 3px; flex: none; }
 .allowed { color: var(--allow); } .denied { color: var(--deny); } .unknown { color: var(--unknown); }
-.evidence { margin: 0; font: 13.5px/1.6 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
-.evidence b { font: 500 13.5px var(--body); color: var(--ink); }
+.ev { margin: -4px 0 14px; font: 13px/1.6 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
 
-.facts { margin: 40px 0 0; font-size: 14.5px; color: var(--muted); }
-.facts a { color: var(--ink); }
-@media (prefers-reduced-motion: no-preference) { .answer { animation: in .2s ease-out; } }
-@keyframes in { from { opacity: .5; } to { opacity: 1; } }
+footer { margin-top: 96px; display: flex; gap: 20px; font-size: 14px; color: var(--muted); }
+footer a { color: inherit; text-underline-offset: 3px; }
+footer a:hover { color: var(--ink); }
 </style>
 </head>
 <body>
-<div class="page">
-  <header>
-    <a class="mark" href="#" aria-label="Reach"><span class="t" aria-hidden="true">&#8866;</span><span class="n">reach</span></a>
-    <nav aria-label="Links">
-      <a href="https://github.com/ctrl-adam/Reach">GitHub</a>
-      <a href="https://pypi.org/project/reach-security/">PyPI</a>
-    </nav>
-  </header>
+<main>
+  <div class="mark"><span aria-hidden="true">&#8866;</span>reach</div>
 
-  <h1>Ask what a credential can do. Get a <em>proof.</em></h1>
-  <p class="lede">Reach checks AWS IAM policies with the Z3 solver. Every answer is a request that gets through, or a
-    proof that none does. It also finds the AI agents holding those credentials.</p>
-  <div class="install"><code id="cmd">pip install reach-security</code><button type="button" id="copy">Copy</button></div>
+  <h1>Prove what a credential can reach.</h1>
+  <p class="lede">Every answer is a request that gets through, or a proof that none does.</p>
+  <button type="button" id="cmd" data-note="copy">pip install reach-security</button>
 
-  <div class="ask" aria-label="Example questions">
-    <div class="bar"><span>Example account</span><div class="who" id="who" role="group" aria-label="Principal"></div></div>
-    <ul class="qs" id="qs"></ul>
-    <div class="answer" id="answer" aria-live="polite"></div>
-  </div>
+  <p class="who">Example account, as<span id="who"></span></p>
+  <ul id="qs"></ul>
 
-  <p class="facts">Checked against AWS's own policy simulator on 9,581 cases, with no open disagreements.
-    <a href="https://github.com/ctrl-adam/Reach/blob/main/validation/FINDINGS.md">Findings</a> &middot;
-    <a href="demo/report.html">Example account audit</a></p>
-</div>
+  <footer>
+    <a href="https://github.com/ctrl-adam/Reach">GitHub</a>
+    <a href="https://pypi.org/project/reach-security/">PyPI</a>
+    <a href="https://github.com/ctrl-adam/Reach/blob/main/validation/FINDINGS.md">Findings</a>
+  </footer>
+</main>
 
 <script type="application/json" id="answers">__ANSWERS__</script>
 <script>
 "use strict";
 const ANSWERS = JSON.parse(document.getElementById("answers").textContent);
 const principals = [...new Set(ANSWERS.map((a) => a.principal))];
-let principal = principals[0], question = ANSWERS[0].question;
+let principal = principals[0], open = ANSWERS[0].question;
 
 function el(tag, attrs = {}, ...kids) {
   const e = document.createElement(tag);
@@ -116,7 +92,15 @@ function el(tag, attrs = {}, ...kids) {
   e.append(...kids);
   return e;
 }
-function line(label, text) { return el("p", { class: "evidence" }, el("b", {}, label + " "), text); }
+function evidence(a) {
+  if (a.verdict === "allowed" && a.witness) {
+    const ctx = Object.entries(a.witness.context || {}).map(([k, v]) => `, ${k} = ${v}`).join("");
+    const by = a.allowed_by.length ? `, allowed by ${a.allowed_by.join(", ")}` : "";
+    return `${a.witness.action} on ${a.witness.resource}${ctx}${by}`;
+  }
+  if (a.verdict === "denied") return "Proof: no request satisfies the policies.";
+  return a.assumptions[0] || a.reasons[0] || "";
+}
 
 function render() {
   document.getElementById("who").replaceChildren(...principals.map((p) => {
@@ -125,36 +109,25 @@ function render() {
     return b;
   }));
   document.getElementById("qs").replaceChildren(...ANSWERS.filter((a) => a.principal === principal).map((a) => {
-    const b = el("button", { type: "button", "aria-pressed": String(a.question === question) },
+    const expanded = a.question === open;
+    const q = el("button", { type: "button", class: "q", "aria-expanded": String(expanded) },
       el("span", {}, "Can it " + a.question + "?"), el("span", { class: "v " + a.verdict }, a.verdict));
-    b.addEventListener("click", () => { question = a.question; render(); });
-    return el("li", {}, b);
+    q.addEventListener("click", () => { open = expanded ? null : a.question; render(); });
+    return expanded ? el("li", {}, q, el("p", { class: "ev" }, evidence(a))) : el("li", {}, q);
   }));
-  const a = ANSWERS.find((x) => x.principal === principal && x.question === question);
-  const parts = [el("p", { class: "verdict " + a.verdict }, a.verdict[0].toUpperCase() + a.verdict.slice(1))];
-  if (a.verdict === "allowed" && a.witness) {
-    const ctx = Object.entries(a.witness.context || {}).map(([k, v]) => ` with ${k} = ${v}`).join("");
-    parts.push(line("Request", `${a.witness.action} on ${a.witness.resource}${ctx}`));
-    if (a.allowed_by.length) parts.push(line("Allowed by", a.allowed_by.join(", ")));
-  } else if (a.verdict === "denied") {
-    parts.push(line("Proof", "no request satisfies the policies. " + (a.reasons[0] || "")));
-  } else {
-    parts.push(line("Depends on", a.assumptions[0] || a.reasons[0] || ""));
-  }
-  document.getElementById("answer").replaceChildren(...parts);
 }
 render();
 
-document.getElementById("copy").addEventListener("click", async (e) => {
-  const button = e.currentTarget;
+document.getElementById("cmd").addEventListener("click", async (e) => {
+  const cmd = e.currentTarget;
   try {
-    await navigator.clipboard.writeText(document.getElementById("cmd").textContent);
-    button.textContent = "Copied";
+    await navigator.clipboard.writeText(cmd.textContent);
+    cmd.dataset.note = "copied";
   } catch (_) {
-    getSelection().selectAllChildren(document.getElementById("cmd"));
-    button.textContent = "Selected";
+    getSelection().selectAllChildren(cmd);
+    cmd.dataset.note = "selected";
   }
-  setTimeout(() => { button.textContent = "Copy"; }, 1500);
+  setTimeout(() => { cmd.dataset.note = "copy"; }, 1500);
 });
 </script>
 </body>
