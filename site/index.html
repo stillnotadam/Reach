@@ -4,120 +4,32 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Reach</title>
-<meta name="description" content="Reach proves what cloud credentials, and the AI agents holding them, can reach in AWS. Every answer is a request that gets through or a proof that none does.">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=STIX+Two+Text:ital@0;1&family=Public+Sans:wght@400;500&family=Fragment+Mono&display=swap" rel="stylesheet">
+<meta name="description" content="Reach proves what cloud credentials, and the AI agents holding them, can reach in AWS.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23000'/%3E%3Cpath d='M10 7v18M10 16h13' stroke='%23fff' stroke-width='3.2' stroke-linecap='round'/%3E%3C/svg%3E">
 <style>
-/* Layout: one narrow column, no boxes; the questions are plain ruled rows and the chosen one opens in place. */
-:root {
-  --paper: #000; --ink: #ededed; --muted: #8a8a8a; --rule: #1f1f1f;
-  --accent: #8ea6ff; --allow: #ff7b72; --deny: #56d38a; --unknown: #e3b341;
-  --display: "STIX Two Text", "STIX Two", Cambria, Georgia, serif;
-  --body: "Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --mono: "Fragment Mono", ui-monospace, "SF Mono", Consolas, monospace;
-  color-scheme: dark;
-}
-* { box-sizing: border-box; }
-html { -webkit-text-size-adjust: 100%; }
-body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.6 var(--body); }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-main { max-width: 640px; margin: 0 auto; padding-inline: 20px; padding-block: 32px 40px; }
+:root { --paper: #000; --ink: #ededed; --muted: #777; color-scheme: dark; }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 15px/1.6 ui-monospace, "SF Mono", Consolas, monospace; }
+main { max-width: 560px; margin: 0 auto; padding: 20vh 20px 40px; }
+p { margin: 0 0 24px; }
+.muted, a { color: var(--muted); }
+a { text-underline-offset: 3px; margin-right: 16px; }
+a:hover { color: var(--ink); }
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
-
-.mark { font: 15px var(--mono); color: var(--muted); }
-.mark span { font-family: var(--display); color: var(--accent); margin-right: 6px; }
-h1 { font: 400 clamp(36px, 7vw, 52px)/1.1 var(--display); letter-spacing: -0.01em; margin: 56px 0 14px; text-wrap: balance; }
-.lede { color: var(--muted); margin: 0 0 22px; }
-#cmd { font: 14.5px var(--mono); color: var(--ink); }
-#cmd::after { content: attr(data-note); margin-left: 12px; font: 13px var(--body); color: var(--muted); }
-
-.who { margin: 48px 0 8px; font-size: 14px; color: var(--muted); }
-.who button { color: var(--muted); font-family: var(--mono); font-size: 13.5px; margin-left: 10px; }
-.who button[aria-pressed="true"] { color: var(--ink); text-decoration: underline; text-underline-offset: 4px; }
-ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule); }
-li { border-bottom: 1px solid var(--rule); }
-.q { width: 100%; display: flex; justify-content: space-between; gap: 16px; text-align: left; padding: 10px 0; }
-.q:hover span:first-child { color: var(--ink); }
-.q span:first-child { color: var(--muted); }
-.q[aria-expanded="true"] span:first-child { color: var(--ink); }
-.v { font: 12px var(--mono); letter-spacing: 0.05em; text-transform: uppercase; padding-top: 3px; flex: none; }
-.allowed { color: var(--allow); } .denied { color: var(--deny); } .unknown { color: var(--unknown); }
-.ev { margin: -4px 0 14px; font: 13px/1.6 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
-
-footer { margin-top: 40px; display: flex; gap: 20px; font-size: 14px; color: var(--muted); }
-footer a { color: inherit; text-underline-offset: 3px; }
-footer a:hover { color: var(--ink); }
+:focus-visible { outline: 1px solid var(--ink); outline-offset: 3px; }
 </style>
 </head>
 <body>
 <main>
-  <div class="mark"><span aria-hidden="true">&#8866;</span>reach</div>
-
-  <h1>Prove what a credential can reach.</h1>
-  <p class="lede">Every answer is a request that gets through, or a proof that none does.</p>
-  <button type="button" id="cmd" data-note="copy">pip install reach-security</button>
-
-  <p class="who">Example account, as<span id="who"></span></p>
-  <ul id="qs"></ul>
-
-  <footer>
-    <a href="https://github.com/stillnotadam/Reach">GitHub</a>
-    <a href="https://pypi.org/project/reach-security/">PyPI</a>
-    <a href="https://github.com/stillnotadam/Reach/blob/main/validation/FINDINGS.md">Findings</a>
-  </footer>
+  <p>reach</p>
+  <p class="muted">Prove what a cloud credential can reach in AWS.</p>
+  <p><button type="button" id="cmd" title="Copy">pip install reach-security</button></p>
+  <p>
+    <a href="https://github.com/stillnotadam/Reach">github</a><a href="demo/report.html">demo</a><a href="https://pypi.org/project/reach-security/">pypi</a>
+  </p>
 </main>
-
-<script type="application/json" id="answers">__ANSWERS__</script>
 <script>
-"use strict";
-const ANSWERS = JSON.parse(document.getElementById("answers").textContent);
-const principals = [...new Set(ANSWERS.map((a) => a.principal))];
-let principal = principals[0], open = ANSWERS[0].question;
-
-function el(tag, attrs = {}, ...kids) {
-  const e = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) k === "class" ? (e.className = v) : e.setAttribute(k, v);
-  e.append(...kids);
-  return e;
-}
-function evidence(a) {
-  if (a.verdict === "allowed" && a.witness) {
-    const ctx = Object.entries(a.witness.context || {}).map(([k, v]) => `, ${k} = ${v}`).join("");
-    const by = a.allowed_by.length ? `, allowed by ${a.allowed_by.join(", ")}` : "";
-    return `${a.witness.action} on ${a.witness.resource}${ctx}${by}`;
-  }
-  if (a.verdict === "denied") return "Proof: no request satisfies the policies.";
-  return a.assumptions[0] || a.reasons[0] || "";
-}
-
-function render() {
-  document.getElementById("who").replaceChildren(...principals.map((p) => {
-    const b = el("button", { type: "button", "aria-pressed": String(p === principal) }, p.split("/")[1]);
-    b.addEventListener("click", () => { principal = p; render(); });
-    return b;
-  }));
-  document.getElementById("qs").replaceChildren(...ANSWERS.filter((a) => a.principal === principal).map((a) => {
-    const expanded = a.question === open;
-    const q = el("button", { type: "button", class: "q", "aria-expanded": String(expanded) },
-      el("span", {}, "Can it " + a.question + "?"), el("span", { class: "v " + a.verdict }, a.verdict));
-    q.addEventListener("click", () => { open = expanded ? null : a.question; render(); });
-    return expanded ? el("li", {}, q, el("p", { class: "ev" }, evidence(a))) : el("li", {}, q);
-  }));
-}
-render();
-
-document.getElementById("cmd").addEventListener("click", async (e) => {
-  const cmd = e.currentTarget;
-  try {
-    await navigator.clipboard.writeText(cmd.textContent);
-    cmd.dataset.note = "copied";
-  } catch (_) {
-    getSelection().selectAllChildren(cmd);
-    cmd.dataset.note = "selected";
-  }
-  setTimeout(() => { cmd.dataset.note = "copy"; }, 1500);
+document.getElementById("cmd").addEventListener("click", (e) => {
+  navigator.clipboard.writeText(e.currentTarget.textContent).catch(() => getSelection().selectAllChildren(e.currentTarget));
 });
 </script>
 </body>
