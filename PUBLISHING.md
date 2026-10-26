@@ -22,7 +22,7 @@ Trusted Publishing lets GitHub Actions publish through OIDC. No PyPI token exist
    | Field | Value |
    |-------|-------|
    | PyPI project name | `reach-security` |
-   | Owner | `ctrl-adam` |
+   | Owner | `stillnotadam` |
    | Repository name | `Reach` |
    | Workflow name | `release.yml` |
    | Environment name | `pypi` |

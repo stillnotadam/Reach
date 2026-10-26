@@ -72,7 +72,7 @@
   a proof. The catalogue now records the 207 keys AWS types as `ArrayOf…`. `--context 'aws:TagKeys=["a","b"]'` pins a
   set.
 - `reach agents --sarif FILE` (SARIF 2.1.0 for GitHub code scanning) and `--fail-on critical|high`.
-- A GitHub Action (`uses: ctrl-adam/Reach@v0.2.0`) that runs Reach and uploads the report to code scanning.
+- A GitHub Action (`uses: stillnotadam/Reach@v0.2.0`) that runs Reach and uploads the report to code scanning.
 
 ## 0.1.0 (2026-10-11)
 

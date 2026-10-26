@@ -1,14 +1,14 @@
 # Reach
 
 [![Website](https://img.shields.io/badge/website-stillnotadam.github.io%2FReach-2a4bd7)](https://stillnotadam.github.io/Reach/)
-[![CI](https://github.com/ctrl-adam/Reach/actions/workflows/ci.yml/badge.svg)](https://github.com/ctrl-adam/Reach/actions/workflows/ci.yml)
+[![CI](https://github.com/stillnotadam/Reach/actions/workflows/ci.yml/badge.svg)](https://github.com/stillnotadam/Reach/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/reach-security.svg)](https://pypi.org/project/reach-security/)
 [![Python](https://img.shields.io/pypi/pyversions/reach-security.svg)](https://pypi.org/project/reach-security/)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 
 **Prove what cloud credentials, and the AI agents holding them, can actually reach.**
 
-### [Try it in your browser: ctrl-adam.github.io/Reach](https://ctrl-adam.github.io/Reach/)
+### [Try it in your browser: stillnotadam.github.io/Reach](https://stillnotadam.github.io/Reach/)
 
 Reach encodes AWS IAM (identity policies, boundaries, SCPs, RCPs, resource policies and their conditions) as
 constraints for the Z3 solver, so every DENIED is a proof and every ALLOWED comes with a concrete request, re-checked by
@@ -121,7 +121,7 @@ agent. Reach finds it for each agent and checks it:
   points the agent at secrets (`~/.ssh`, `.aws/credentials`, another agent's `mcp.json`) and tells it to keep quiet is
   tool poisoning; override phrasing, instructions about other tools (shadowing) and `<IMPORTANT>` blocks are flagged
   too. Built in, no extra dependency.
-- **Whole files**, with [Husk](https://github.com/ctrl-adam/Husk) (`pip install "reach-security[husk]"`): directives
+- **Whole files**, with [Husk](https://github.com/stillnotadam/Husk) (`pip install "reach-security[husk]"`): directives
   hidden in comments, override language, invisible and bidirectional Unicode, and skill or server code that sends
   credentials out or contacts a bare IP.
 
@@ -138,7 +138,7 @@ permissions:
   security-events: write  # to upload the report
 steps:
   - uses: actions/checkout@v7
-  - uses: ctrl-adam/Reach@v0.2.1
+  - uses: stillnotadam/Reach@v0.2.1
     with:
       fail-on: critical  # optional: fail the job on a critical trifecta
 ```

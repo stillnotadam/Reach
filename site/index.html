@@ -8,47 +8,37 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=STIX+Two+Text:ital@0;1&family=Public+Sans:wght@400;500&family=Fragment+Mono&display=swap" rel="stylesheet">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%232a4bd7'/%3E%3Cpath d='M10 7v18M10 16h13' stroke='%23fff' stroke-width='3.2' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23000'/%3E%3Cpath d='M10 7v18M10 16h13' stroke='%23fff' stroke-width='3.2' stroke-linecap='round'/%3E%3C/svg%3E">
 <style>
 /* Layout: one narrow column, no boxes; the questions are plain ruled rows and the chosen one opens in place. */
 :root {
-  --paper: #f8f9fb; --ink: #161a22; --muted: #6b7280; --rule: #e3e6ec;
-  --accent: #2a4bd7; --allow: #c4352b; --deny: #237a4b; --unknown: #9a6700;
+  --paper: #000; --ink: #ededed; --muted: #8a8a8a; --rule: #1f1f1f;
+  --accent: #8ea6ff; --allow: #ff7b72; --deny: #56d38a; --unknown: #e3b341;
   --display: "STIX Two Text", "STIX Two", Cambria, Georgia, serif;
   --body: "Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: "Fragment Mono", ui-monospace, "SF Mono", Consolas, monospace;
-  color-scheme: light;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --paper: #0e1116; --ink: #e6e8ec; --muted: #8f96a3; --rule: #252a33;
-    --accent: #8ea6ff; --allow: #ff8a7f; --deny: #6fd39b; --unknown: #f0c055; color-scheme: dark;
-  }
-}
-:root[data-theme="dark"] {
-  --paper: #0e1116; --ink: #e6e8ec; --muted: #8f96a3; --rule: #252a33;
-  --accent: #8ea6ff; --allow: #ff8a7f; --deny: #6fd39b; --unknown: #f0c055; color-scheme: dark;
+  color-scheme: dark;
 }
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
 body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.6 var(--body); }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-main { max-width: 640px; margin: 0 auto; padding-inline: 20px; padding-block: 40px 56px; }
+main { max-width: 640px; margin: 0 auto; padding-inline: 20px; padding-block: 32px 40px; }
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
 
 .mark { font: 15px var(--mono); color: var(--muted); }
 .mark span { font-family: var(--display); color: var(--accent); margin-right: 6px; }
-h1 { font: 400 clamp(36px, 7vw, 52px)/1.1 var(--display); letter-spacing: -0.01em; margin: 120px 0 16px; text-wrap: balance; }
+h1 { font: 400 clamp(36px, 7vw, 52px)/1.1 var(--display); letter-spacing: -0.01em; margin: 56px 0 14px; text-wrap: balance; }
 .lede { color: var(--muted); margin: 0 0 22px; }
 #cmd { font: 14.5px var(--mono); color: var(--ink); }
 #cmd::after { content: attr(data-note); margin-left: 12px; font: 13px var(--body); color: var(--muted); }
 
-.who { margin: 96px 0 10px; font-size: 14px; color: var(--muted); }
+.who { margin: 48px 0 8px; font-size: 14px; color: var(--muted); }
 .who button { color: var(--muted); font-family: var(--mono); font-size: 13.5px; margin-left: 10px; }
 .who button[aria-pressed="true"] { color: var(--ink); text-decoration: underline; text-underline-offset: 4px; }
 ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule); }
 li { border-bottom: 1px solid var(--rule); }
-.q { width: 100%; display: flex; justify-content: space-between; gap: 16px; text-align: left; padding: 12px 0; }
+.q { width: 100%; display: flex; justify-content: space-between; gap: 16px; text-align: left; padding: 10px 0; }
 .q:hover span:first-child { color: var(--ink); }
 .q span:first-child { color: var(--muted); }
 .q[aria-expanded="true"] span:first-child { color: var(--ink); }
@@ -56,7 +46,7 @@ li { border-bottom: 1px solid var(--rule); }
 .allowed { color: var(--allow); } .denied { color: var(--deny); } .unknown { color: var(--unknown); }
 .ev { margin: -4px 0 14px; font: 13px/1.6 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
 
-footer { margin-top: 96px; display: flex; gap: 20px; font-size: 14px; color: var(--muted); }
+footer { margin-top: 40px; display: flex; gap: 20px; font-size: 14px; color: var(--muted); }
 footer a { color: inherit; text-underline-offset: 3px; }
 footer a:hover { color: var(--ink); }
 </style>
@@ -73,9 +63,9 @@ footer a:hover { color: var(--ink); }
   <ul id="qs"></ul>
 
   <footer>
-    <a href="https://github.com/ctrl-adam/Reach">GitHub</a>
+    <a href="https://github.com/stillnotadam/Reach">GitHub</a>
     <a href="https://pypi.org/project/reach-security/">PyPI</a>
-    <a href="https://github.com/ctrl-adam/Reach/blob/main/validation/FINDINGS.md">Findings</a>
+    <a href="https://github.com/stillnotadam/Reach/blob/main/validation/FINDINGS.md">Findings</a>
   </footer>
 </main>
 

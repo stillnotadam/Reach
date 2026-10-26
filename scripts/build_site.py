@@ -35,8 +35,6 @@ QUESTIONS = [
     ("upload to goat-uploads", "s3:PutObject", "arn:aws:s3:::goat-uploads/report.csv", {}),
     ("upload to goat-uploads from 8.8.8.8", "s3:PutObject", "arn:aws:s3:::goat-uploads/report.csv",
      {"aws:SourceIp": "8.8.8.8"}),
-    ("decrypt with any KMS key", "kms:Decrypt", "*", {}),
-    ("start an EC2 instance", "ec2:RunInstances", "*", {}),
 ]  # fmt: skip
 
 

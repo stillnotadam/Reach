@@ -24,7 +24,7 @@ from .context import ContextFile, Issue, malicious
 from .trifecta import LEGS, Assessment
 
 SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json"
-INFO_URI = "https://github.com/ctrl-adam/Reach"
+INFO_URI = "https://github.com/stillnotadam/Reach"
 
 # id, name, short description, full description, default level, GitHub security-severity
 RULES: tuple[tuple[str, str, str, str, str, str], ...] = (

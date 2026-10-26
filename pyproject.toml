@@ -33,8 +33,8 @@ aws = ["boto3>=1.34"]  # validation/aws_simulator.py only
 husk = ["husk-scanner>=1.5"]  # scan the text agents load (reach agents)
 
 [project.urls]
-Homepage = "https://github.com/ctrl-adam/Reach"
-Repository = "https://github.com/ctrl-adam/Reach"
+Homepage = "https://github.com/stillnotadam/Reach"
+Repository = "https://github.com/stillnotadam/Reach"
 
 [project.scripts]
 reach = "reach.cli:main"

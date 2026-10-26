@@ -7,7 +7,7 @@ reaches the model with the authority of the user's own setup, and whoever can wr
 cloned repository's CLAUDE.md, a third-party skill or plugin, an MCP server whose tool descriptions carry
 instructions (tool poisoning).
 
-This module finds that text for each agent and, when Husk (https://github.com/ctrl-adam/Husk, `pip install
+This module finds that text for each agent and, when Husk (https://github.com/stillnotadam/Husk, `pip install
 reach-security[husk]`) is installed, scans it. Husk's findings come back with a severity and are sorted here by
 what they mean for the agent:
 

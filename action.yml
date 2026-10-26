@@ -1,6 +1,6 @@
 name: Reach
 description: "Find AI agents in a repository, the credentials they hold, and lethal-trifecta paths; report them to code scanning."
-author: ctrl-adam
+author: stillnotadam
 branding:
   icon: shield
   color: red
