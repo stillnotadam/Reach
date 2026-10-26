@@ -1,6 +1,6 @@
 # Reach
 
-[![Website](https://img.shields.io/badge/website-ctrl--adam.github.io%2FReach-2a4bd7)](https://ctrl-adam.github.io/Reach/)
+[![Website](https://img.shields.io/badge/website-stillnotadam.github.io%2FReach-2a4bd7)](https://stillnotadam.github.io/Reach/)
 [![CI](https://github.com/ctrl-adam/Reach/actions/workflows/ci.yml/badge.svg)](https://github.com/ctrl-adam/Reach/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/reach-security.svg)](https://pypi.org/project/reach-security/)
 [![Python](https://img.shields.io/pypi/pyversions/reach-security.svg)](https://pypi.org/project/reach-security/)
@@ -24,7 +24,7 @@ reach can --authz authz.json --principal dev secretsmanager:GetSecretValue '*'
 ```
 
 Try it on the deliberately vulnerable [`examples/reach-goat`](examples/reach-goat), or click through a
-[live audit report](https://ctrl-adam.github.io/Reach/demo/report.html) of a synthetic account on the [project site](https://ctrl-adam.github.io/Reach/).
+[live audit report](https://stillnotadam.github.io/Reach/demo/report.html) of a synthetic account on the [project site](https://stillnotadam.github.io/Reach/).
 
 ## How the reasoning works
 
